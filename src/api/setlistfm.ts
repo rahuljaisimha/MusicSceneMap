@@ -12,6 +12,8 @@
 
 const isDev = import.meta.env.DEV;
 
+import { debugLog } from "../debug/DebugLog";
+
 function getBaseUrl(): string {
   if (isDev) {
     return "/setlistfm-api";
@@ -118,9 +120,12 @@ export async function getSetlistsForArtist(
   mbid: string,
   page = 1
 ): Promise<SetlistSearchResult> {
-  return setlistFetch<SetlistSearchResult>(`/artist/${mbid}/setlists`, {
+  debugLog.log(`Querying Setlist.fm for setlists (${mbid}, page ${page})`);
+  const result = await setlistFetch<SetlistSearchResult>(`/artist/${mbid}/setlists`, {
     p: page.toString(),
   });
+  debugLog.log(`Setlist.fm returned ${result.setlist?.length ?? 0} setlists`);
+  return result;
 }
 
 /**

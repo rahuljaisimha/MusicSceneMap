@@ -8,6 +8,8 @@
 const BASE_URL = "https://musicbrainz.org/ws/2";
 const USER_AGENT = "MusicSceneMap/0.0.1 (https://github.com/musicscenemap)";
 
+import { debugLog } from "../debug/DebugLog";
+
 let lastRequestTime = 0;
 
 async function mbFetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
@@ -69,10 +71,12 @@ export interface MBRelation {
  * Search for artists by name.
  */
 export async function searchArtists(query: string, limit = 10): Promise<MBArtist[]> {
+  debugLog.log(`Querying MusicBrainz for "${query}"`);
   const result = await mbFetch<MBArtistSearchResult>("/artist", {
     query: `artist:"${query}"`,
     limit: limit.toString(),
   });
+  debugLog.log(`MusicBrainz returned ${result.artists.length} results for "${query}"`);
   return result.artists;
 }
 
@@ -80,6 +84,7 @@ export async function searchArtists(query: string, limit = 10): Promise<MBArtist
  * Get a single artist with relationships (members, labels, etc.)
  */
 export async function getArtistWithRelations(mbid: string): Promise<MBArtist> {
+  debugLog.log(`Querying MusicBrainz for artist relations (${mbid})`);
   return mbFetch<MBArtist>(`/artist/${mbid}`, {
     inc: "artist-rels+label-rels",
   });

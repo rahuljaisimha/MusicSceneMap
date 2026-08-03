@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { SearchBar } from "./components/SearchBar";
 import { GraphView } from "./components/GraphView";
 import { InfoPanel } from "./components/InfoPanel";
+import { DebugConsole } from "./components/DebugConsole";
 import { SceneGraph } from "./graph/SceneGraph";
 import { expandArtist } from "./graph/expand";
 import type { GraphNode } from "./graph/types";
@@ -42,6 +43,7 @@ function App() {
   return (
     <>
       <SearchBar onSearch={handleSearch} loading={loading} />
+      <DebugConsole />
       {error && <div style={{ color: "#ff6b6b", padding: "0.5rem 1rem" }}>{error}</div>}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <GraphView data={graphData} onNodeClick={handleNodeClick} />

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getApiKey, setApiKey } from "../api/setlistfm";
+import { debugLog } from "../debug/DebugLog";
 
 interface Props {
   onKeyChange: () => void;
@@ -9,6 +10,7 @@ export function Settings({ onKeyChange }: Props) {
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState(getApiKey() ?? "");
   const [saved, setSaved] = useState(!!getApiKey());
+  const [debug, setDebug] = useState(debugLog.enabled);
 
   const handleSave = () => {
     const trimmed = key.trim();
@@ -17,6 +19,12 @@ export function Settings({ onKeyChange }: Props) {
       setSaved(true);
       onKeyChange();
     }
+  };
+
+  const handleDebugToggle = () => {
+    const next = !debug;
+    setDebug(next);
+    debugLog.setEnabled(next);
   };
 
   return (
@@ -55,6 +63,19 @@ export function Settings({ onKeyChange }: Props) {
           <p style={styles.note}>
             Stored in your browser's localStorage only. Never sent anywhere except setlist.fm.
           </p>
+
+          <div style={styles.divider} />
+
+          <label style={styles.debugRow}>
+            <input
+              type="checkbox"
+              checked={debug}
+              onChange={handleDebugToggle}
+              style={styles.checkbox}
+            />
+            Debug mode
+            <span style={styles.hint}> — show API request log</span>
+          </label>
         </div>
       )}
     </div>
@@ -129,5 +150,22 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.7rem",
     color: "#666",
     marginTop: "0.4rem",
+  },
+  divider: {
+    height: "1px",
+    background: "#333",
+    margin: "0.75rem 0",
+  },
+  debugRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.4rem",
+    fontSize: "0.8rem",
+    fontWeight: 600,
+    color: "#ccc",
+    cursor: "pointer",
+  },
+  checkbox: {
+    accentColor: "#55efc4",
   },
 };

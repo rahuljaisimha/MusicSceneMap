@@ -4,9 +4,22 @@
  *
  * Requires an API key (free registration at https://www.setlist.fm/settings/api).
  * For this POC, we store it in localStorage or prompt the user.
+ *
+ * CORS: Setlist.fm does not send Access-Control-Allow-Origin headers.
+ * - In dev: Vite proxy rewrites /setlistfm-api → https://api.setlist.fm/rest/1.0
+ * - In prod (GitHub Pages): uses a public CORS proxy as a fallback.
  */
 
-const BASE_URL = "https://api.setlist.fm/rest/1.0";
+const isDev = import.meta.env.DEV;
+
+function getBaseUrl(): string {
+  if (isDev) {
+    return "/setlistfm-api";
+  }
+  // In production, use corsproxy.io as a lightweight CORS proxy.
+  // This is acceptable for a low-traffic POC.
+  return "https://corsproxy.io/?url=https://api.setlist.fm/rest/1.0";
+}
 
 export function getApiKey(): string | null {
   return localStorage.getItem("setlistfm_api_key");
@@ -24,7 +37,8 @@ async function setlistFetch<T>(path: string, params: Record<string, string> = {}
     );
   }
 
-  const url = new URL(`${BASE_URL}${path}`);
+  const baseUrl = getBaseUrl();
+  const url = new URL(`${baseUrl}${path}`, window.location.origin);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
   }

@@ -10,6 +10,7 @@ import {
   extractVenues,
   extractRelatedArtists,
   getApiKey,
+  isSetlistFmEnabled,
 } from "../api/setlistfm";
 import { SceneGraph } from "./SceneGraph";
 import type { ArtistNode, MusicianNode, VenueNode, CityNode, LabelNode } from "./types";
@@ -101,8 +102,8 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
     });
   }
 
-  // 6. If Setlist.fm API key is available, get venue data
-  if (getApiKey()) {
+  // 6. If Setlist.fm is enabled and API key is available, get venue data
+  if (isSetlistFmEnabled() && getApiKey()) {
     try {
       const setlistResult = await getSetlistsForArtist(mbid, 1);
       const setlists = setlistResult.setlist ?? [];

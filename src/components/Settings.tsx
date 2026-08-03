@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getApiKey, setApiKey } from "../api/setlistfm";
+import { getApiKey, setApiKey, isSetlistFmEnabled, setSetlistFmEnabled } from "../api/setlistfm";
 import { debugLog } from "../debug/DebugLog";
 
 interface Props {
@@ -11,6 +11,7 @@ export function Settings({ onKeyChange }: Props) {
   const [key, setKey] = useState(getApiKey() ?? "");
   const [saved, setSaved] = useState(!!getApiKey());
   const [debug, setDebug] = useState(debugLog.enabled);
+  const [setlistEnabled, setSetlistEnabled] = useState(isSetlistFmEnabled());
 
   const handleSave = () => {
     const trimmed = key.trim();
@@ -63,6 +64,19 @@ export function Settings({ onKeyChange }: Props) {
           <p style={styles.note}>
             Stored in your browser's localStorage only. Never sent anywhere except setlist.fm.
           </p>
+
+          <div style={styles.divider} />
+
+          <label style={styles.debugRow}>
+            <input
+              type="checkbox"
+              checked={setlistEnabled}
+              onChange={() => { const next = !setlistEnabled; setSetlistEnabled(next); setSetlistFmEnabled(next); }}
+              style={styles.checkbox}
+            />
+            Enable Setlist.fm data
+            <span style={styles.hint}> — venues &amp; cities</span>
+          </label>
 
           <div style={styles.divider} />
 

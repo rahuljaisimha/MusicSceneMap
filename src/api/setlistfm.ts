@@ -31,6 +31,14 @@ export function setApiKey(key: string): void {
   localStorage.setItem("setlistfm_api_key", key);
 }
 
+export function isSetlistFmEnabled(): boolean {
+  return localStorage.getItem("setlistfm_enabled") === "true";
+}
+
+export function setSetlistFmEnabled(value: boolean): void {
+  localStorage.setItem("setlistfm_enabled", String(value));
+}
+
 async function setlistFetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const apiKey = getApiKey();
   if (!apiKey) {

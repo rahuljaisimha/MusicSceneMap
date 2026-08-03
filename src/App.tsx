@@ -13,6 +13,7 @@ function App() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [prefill, setPrefill] = useState<string | null>(null);
 
   const handleSearch = useCallback(
     async (artistName: string) => {
@@ -35,6 +36,9 @@ function App() {
       if (node.id) {
         const graphNode = graph.getNode(String(node.id));
         setSelectedNode(graphNode ?? null);
+        if (graphNode) {
+          setPrefill(graphNode.name);
+        }
       }
     },
     [graph]
@@ -42,7 +46,7 @@ function App() {
 
   return (
     <>
-      <SearchBar onSearch={handleSearch} loading={loading} />
+      <SearchBar onSearch={handleSearch} loading={loading} prefill={prefill} onPrefillConsumed={() => setPrefill(null)} />
       <DebugConsole />
       {error && <div style={{ color: "#ff6b6b", padding: "0.5rem 1rem" }}>{error}</div>}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>

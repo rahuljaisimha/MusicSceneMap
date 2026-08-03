@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/musicbrainz.ts","./src/api/setlistfm.ts","./src/components/graphview.tsx","./src/components/infopanel.tsx","./src/components/searchbar.tsx","./src/components/settings.tsx","./src/graph/scenegraph.ts","./src/graph/expand.ts","./src/graph/types.ts"],"version":"5.9.3"}

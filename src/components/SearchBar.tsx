@@ -35,27 +35,33 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
 
   return (
     <form onSubmit={handleSubmit} style={styles.form}>
-      <div style={styles.title}>MusicSceneMap</div>
-      <input
-        ref={inputRef}
-        type="text"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search an artist (e.g. Ty Segall, Osees, King Gizzard)"
-        disabled={loading}
-        style={{
-          ...styles.input,
-          ...(highlight ? styles.inputHighlight : {}),
-        }}
-        aria-label="Search artists"
-      />
-      <button type="submit" disabled={loading || !query.trim()} style={styles.button}>
-        {loading ? "Loading…" : "Expand"}
-      </button>
-      <button type="button" onClick={onReset} style={styles.resetBtn} title="Clear graph">
-        Reset
-      </button>
-      <Settings onKeyChange={() => {}} />
+      <div style={styles.topRow}>
+        <div style={styles.title}>MusicSceneMap</div>
+        <div style={styles.topActions}>
+          <button type="button" onClick={onReset} style={styles.resetBtn} title="Clear graph">
+            Reset
+          </button>
+          <Settings onKeyChange={() => {}} />
+        </div>
+      </div>
+      <div style={styles.searchRow}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search an artist (e.g. Ty Segall, Osees, King Gizzard)"
+          disabled={loading}
+          style={{
+            ...styles.input,
+            ...(highlight ? styles.inputHighlight : {}),
+          }}
+          aria-label="Search artists"
+        />
+        <button type="submit" disabled={loading || !query.trim()} style={styles.button}>
+          {loading ? "Loading…" : "Expand"}
+        </button>
+      </div>
     </form>
   );
 }
@@ -63,11 +69,26 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
 const styles: Record<string, React.CSSProperties> = {
   form: {
     display: "flex",
-    alignItems: "center",
-    gap: "0.75rem",
-    padding: "0.75rem 1rem",
+    flexDirection: "column",
+    gap: "0.5rem",
+    padding: "0.5rem 0.75rem",
     borderBottom: "1px solid #2a2a2a",
     background: "#1a1a1a",
+  },
+  topRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  topActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+  },
+  searchRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
   },
   title: {
     fontWeight: 700,
@@ -77,12 +98,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   input: {
     flex: 1,
+    minWidth: "0",
     padding: "0.5rem 0.75rem",
     borderRadius: "4px",
     border: "1px solid #444",
     background: "#2a2a2a",
     color: "#e0e0e0",
-    fontSize: "0.9rem",
+    fontSize: "16px",
     transition: "border-color 0.3s, box-shadow 0.3s",
   },
   inputHighlight: {

@@ -7,8 +7,10 @@ interface Props {
 }
 
 export function InfoPanel({ node, onClose }: Props) {
+  const isMobile = window.innerWidth < 640;
+
   return (
-    <aside style={styles.panel} aria-label="Node details">
+    <aside style={isMobile ? styles.panelMobile : styles.panel} aria-label="Node details">
       <div style={styles.header}>
         <span style={{ ...styles.badge, background: NODE_COLORS[node.type] }}>
           {node.type}
@@ -49,10 +51,23 @@ export function InfoPanel({ node, onClose }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   panel: {
     width: "280px",
+    maxWidth: "100%",
     padding: "1rem",
     background: "#1a1a1a",
     borderLeft: "1px solid #2a2a2a",
     overflowY: "auto",
+  },
+  panelMobile: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    maxHeight: "40vh",
+    padding: "1rem",
+    background: "#1a1a1a",
+    borderTop: "1px solid #2a2a2a",
+    overflowY: "auto",
+    zIndex: 50,
   },
   header: {
     display: "flex",

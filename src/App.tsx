@@ -61,7 +61,7 @@ function App() {
       <SearchBar onSearch={handleSearch} loading={loading} prefill={prefill} onPrefillConsumed={() => setPrefill(null)} onReset={handleReset} />
       <DebugConsole />
       {error && <div style={{ color: "#ff6b6b", padding: "0.5rem 1rem" }}>{error}</div>}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <GraphView data={graphData} onNodeClick={handleNodeClick} />
         {selectedNode && (
           <InfoPanel node={selectedNode} onClose={() => setSelectedNode(null)} />

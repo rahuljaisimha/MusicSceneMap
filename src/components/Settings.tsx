@@ -117,7 +117,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #333",
     borderRadius: "6px",
     padding: "0.75rem",
-    width: "320px",
+    width: "min(320px, calc(100vw - 2rem))",
     zIndex: 100,
     boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
   },

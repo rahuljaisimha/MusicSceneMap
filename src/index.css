@@ -44,5 +44,5 @@ body {
 }
 
 .search-input-highlight {
-  animation: highlight-fade 2s ease-out forwards;
+  animation: highlight-fade 0.8s ease-out forwards;
 }

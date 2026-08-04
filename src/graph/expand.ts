@@ -109,11 +109,10 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
     };
     graph.addNode(supporterNode);
     graph.addEdge({
-      id: `${supporter.id}-collaborated_with-${mbid}`,
+      id: `${supporter.id}-support_musician-${mbid}`,
       source: supporter.id,
       target: mbid,
-      type: "collaborated_with",
-      metadata: { via: "supporting musician" },
+      type: "support_musician",
     });
   }
 
@@ -129,11 +128,10 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
     };
     graph.addNode(bandNode);
     graph.addEdge({
-      id: `${mbid}-collaborated_with-${band.id}`,
+      id: `${mbid}-support_musician-${band.id}`,
       source: mbid,
       target: band.id,
-      type: "collaborated_with",
-      metadata: { via: "supporting musician" },
+      type: "support_musician",
     });
   }
 

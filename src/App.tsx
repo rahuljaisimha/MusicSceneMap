@@ -8,7 +8,11 @@ import { expandArtist } from "./graph/expand";
 import type { GraphNode } from "./graph/types";
 
 function App() {
-  const [graph] = useState(() => new SceneGraph());
+  const [graph] = useState(() => {
+    const g = new SceneGraph();
+    g.load();
+    return g;
+  });
   const [graphData, setGraphData] = useState(graph.toForceGraphData());
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [loading, setLoading] = useState(false);
@@ -21,6 +25,7 @@ function App() {
       setError(null);
       try {
         await expandArtist(artistName, graph);
+        graph.save();
         setGraphData(graph.toForceGraphData());
       } catch (e) {
         setError(e instanceof Error ? e.message : "Unknown error");
@@ -30,6 +35,13 @@ function App() {
     },
     [graph]
   );
+
+  const handleReset = useCallback(() => {
+    graph.clear();
+    setGraphData(graph.toForceGraphData());
+    setSelectedNode(null);
+    setError(null);
+  }, [graph]);
 
   const handleNodeClick = useCallback(
     (node: { id?: string | number }) => {
@@ -46,7 +58,7 @@ function App() {
 
   return (
     <>
-      <SearchBar onSearch={handleSearch} loading={loading} prefill={prefill} onPrefillConsumed={() => setPrefill(null)} />
+      <SearchBar onSearch={handleSearch} loading={loading} prefill={prefill} onPrefillConsumed={() => setPrefill(null)} onReset={handleReset} />
       <DebugConsole />
       {error && <div style={{ color: "#ff6b6b", padding: "0.5rem 1rem" }}>{error}</div>}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>

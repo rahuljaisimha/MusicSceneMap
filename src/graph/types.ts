@@ -93,6 +93,7 @@ export interface ForceGraphNodeData {
   type: NodeType;
   color: string;
   val: number; // node size
+  expanded: boolean;
 }
 
 export interface ForceGraphLinkData {

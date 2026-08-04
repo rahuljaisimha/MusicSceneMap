@@ -13,6 +13,7 @@
 const isDev = import.meta.env.DEV;
 
 import { debugLog } from "../debug/DebugLog";
+import { cachedFetch } from "./cache";
 
 function getBaseUrl(): string {
   if (isDev) {
@@ -128,12 +129,15 @@ export async function getSetlistsForArtist(
   mbid: string,
   page = 1
 ): Promise<SetlistSearchResult> {
-  debugLog.log(`Querying Setlist.fm for setlists (${mbid}, page ${page})`);
-  const result = await setlistFetch<SetlistSearchResult>(`/artist/${mbid}/setlists`, {
-    p: page.toString(),
+  const cacheKey = `sl_setlists_${mbid}_${page}`;
+  return cachedFetch(cacheKey, async () => {
+    debugLog.log(`Querying Setlist.fm for setlists (${mbid}, page ${page})`);
+    const result = await setlistFetch<SetlistSearchResult>(`/artist/${mbid}/setlists`, {
+      p: page.toString(),
+    });
+    debugLog.log(`Setlist.fm returned ${result.setlist?.length ?? 0} setlists`);
+    return result;
   });
-  debugLog.log(`Setlist.fm returned ${result.setlist?.length ?? 0} setlists`);
-  return result;
 }
 
 /**

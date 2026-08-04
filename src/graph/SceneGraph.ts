@@ -14,6 +14,7 @@ import { NODE_COLORS, EDGE_COLORS } from "./types";
 export class SceneGraph {
   private nodes = new Map<string, GraphNode>();
   private edges = new Map<string, GraphEdge>();
+  private expandedNodes = new Set<string>();
 
   addNode(node: GraphNode): void {
     if (this.nodes.has(node.id)) {
@@ -55,6 +56,14 @@ export class SceneGraph {
       .filter((n): n is GraphNode => n !== undefined);
   }
 
+  markExpanded(nodeId: string): void {
+    this.expandedNodes.add(nodeId);
+  }
+
+  isExpanded(nodeId: string): boolean {
+    return this.expandedNodes.has(nodeId);
+  }
+
   toForceGraphData(): ForceGraphData {
     const nodes: ForceGraphNodeData[] = [];
     const links: ForceGraphLinkData[] = [];
@@ -66,6 +75,7 @@ export class SceneGraph {
         type: node.type,
         color: NODE_COLORS[node.type],
         val: node.type === "artist" ? 3 : node.type === "venue" ? 2 : 1,
+        expanded: this.expandedNodes.has(node.id),
       });
     }
 
@@ -90,5 +100,41 @@ export class SceneGraph {
 
   get edgeCount(): number {
     return this.edges.size;
+  }
+
+  // --- Persistence ---
+
+  private static STORAGE_KEY = "musicscenemap_graph";
+
+  save(): void {
+    const data = {
+      nodes: [...this.nodes.values()],
+      edges: [...this.edges.values()],
+      expanded: [...this.expandedNodes],
+    };
+    localStorage.setItem(SceneGraph.STORAGE_KEY, JSON.stringify(data));
+  }
+
+  load(): boolean {
+    const raw = localStorage.getItem(SceneGraph.STORAGE_KEY);
+    if (!raw) return false;
+    try {
+      const data = JSON.parse(raw) as { nodes: GraphNode[]; edges: GraphEdge[]; expanded?: string[] };
+      for (const node of data.nodes) this.nodes.set(node.id, node);
+      for (const edge of data.edges) this.edges.set(edge.id, edge);
+      if (data.expanded) {
+        for (const id of data.expanded) this.expandedNodes.add(id);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  clear(): void {
+    this.nodes.clear();
+    this.edges.clear();
+    this.expandedNodes.clear();
+    localStorage.removeItem(SceneGraph.STORAGE_KEY);
   }
 }

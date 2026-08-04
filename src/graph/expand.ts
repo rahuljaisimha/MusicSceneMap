@@ -29,8 +29,11 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
     throw new Error(`No artist found for "${artistName}"`);
   }
 
-  // Take the top result
-  const topResult = searchResults[0]!;
+  // Prefer an exact name match over MusicBrainz's relevance ranking
+  const exactMatch = searchResults.find(
+    (a) => a.name.toLowerCase() === artistName.toLowerCase()
+  );
+  const topResult = exactMatch ?? searchResults[0]!;
   const mbid = topResult.id;
 
   // 2. Get full artist with relations
@@ -46,6 +49,7 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
     country: artist.country,
   };
   graph.addNode(artistNode);
+  graph.markExpanded(mbid);
 
   // 3. Process members (people in this band)
   const members = extractMembers(artist);

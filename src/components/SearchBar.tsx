@@ -6,9 +6,10 @@ interface Props {
   loading: boolean;
   prefill: string | null;
   onPrefillConsumed: () => void;
+  onReset: () => void;
 }
 
-export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed }: Props) {
+export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onReset }: Props) {
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -50,6 +51,9 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed }: Pro
       />
       <button type="submit" disabled={loading || !query.trim()} style={styles.button}>
         {loading ? "Loading…" : "Expand"}
+      </button>
+      <button type="button" onClick={onReset} style={styles.resetBtn} title="Clear graph">
+        Reset
       </button>
       <Settings onKeyChange={() => {}} />
     </form>
@@ -94,5 +98,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: "pointer",
     fontSize: "0.9rem",
+  },
+  resetBtn: {
+    padding: "0.5rem 0.75rem",
+    borderRadius: "4px",
+    border: "1px solid #444",
+    background: "transparent",
+    color: "#888",
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: "0.8rem",
   },
 };

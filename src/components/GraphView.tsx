@@ -38,6 +38,16 @@ export function GraphView({ data, onNodeClick }: Props) {
           const fontSize = 12 / globalScale;
           const nodeColor = (node as { color?: string }).color ?? "#fff";
           const size = ((node as { val?: number }).val ?? 1) * 2;
+          const isExpanded = (node as { expanded?: boolean }).expanded ?? false;
+
+          // Draw expanded indicator ring
+          if (isExpanded) {
+            ctx.beginPath();
+            ctx.arc(node.x ?? 0, node.y ?? 0, size + 3, 0, 2 * Math.PI);
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 1.5 / globalScale;
+            ctx.stroke();
+          }
 
           // Draw circle
           ctx.beginPath();

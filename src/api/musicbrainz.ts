@@ -9,6 +9,7 @@ const BASE_URL = "https://musicbrainz.org/ws/2";
 const USER_AGENT = "MusicSceneMap/0.0.1 (https://github.com/musicscenemap)";
 
 import { debugLog } from "../debug/DebugLog";
+import { cachedFetch } from "./cache";
 
 let lastRequestTime = 0;
 
@@ -71,22 +72,28 @@ export interface MBRelation {
  * Search for artists by name.
  */
 export async function searchArtists(query: string, limit = 10): Promise<MBArtist[]> {
-  debugLog.log(`Querying MusicBrainz for "${query}"`);
-  const result = await mbFetch<MBArtistSearchResult>("/artist", {
-    query: `artist:"${query}"`,
-    limit: limit.toString(),
+  const cacheKey = `mb_search_${query}_${limit}`;
+  return cachedFetch(cacheKey, async () => {
+    debugLog.log(`Querying MusicBrainz for "${query}"`);
+    const result = await mbFetch<MBArtistSearchResult>("/artist", {
+      query: `artist:"${query}"`,
+      limit: limit.toString(),
+    });
+    debugLog.log(`MusicBrainz returned ${result.artists.length} results for "${query}"`);
+    return result.artists;
   });
-  debugLog.log(`MusicBrainz returned ${result.artists.length} results for "${query}"`);
-  return result.artists;
 }
 
 /**
  * Get a single artist with relationships (members, labels, etc.)
  */
 export async function getArtistWithRelations(mbid: string): Promise<MBArtist> {
-  debugLog.log(`Querying MusicBrainz for artist relations (${mbid})`);
-  return mbFetch<MBArtist>(`/artist/${mbid}`, {
-    inc: "artist-rels+label-rels",
+  const cacheKey = `mb_artist_${mbid}`;
+  return cachedFetch(cacheKey, async () => {
+    debugLog.log(`Querying MusicBrainz for artist relations (${mbid})`);
+    return mbFetch<MBArtist>(`/artist/${mbid}`, {
+      inc: "artist-rels+label-rels",
+    });
   });
 }
 

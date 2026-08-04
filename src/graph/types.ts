@@ -68,6 +68,7 @@ export type GraphNode =
 export type EdgeType =
   | "member_of"
   | "former_member_of"
+  | "support_musician"
   | "played_at"
   | "located_in"
   | "part_of_scene"
@@ -123,6 +124,7 @@ export const NODE_COLORS: Record<NodeType, string> = {
 export const EDGE_COLORS: Record<EdgeType, string> = {
   member_of: "#feca57",
   former_member_of: "#636e72",
+  support_musician: "#81ecec",
   played_at: "#48dbfb",
   located_in: "#0abde3",
   part_of_scene: "#a29bfe",

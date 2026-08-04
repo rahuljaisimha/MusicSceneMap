@@ -4,6 +4,8 @@ import {
   extractMembers,
   extractBands,
   extractLabels,
+  extractSupportMusicians,
+  extractSupportedBands,
 } from "../api/musicbrainz";
 import {
   getSetlistsForArtist,
@@ -93,6 +95,43 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
       source: mbid,
       target: band.id,
       type: current ? "member_of" : "former_member_of",
+    });
+  }
+
+  // 4b. Process support musicians (people who supported this group)
+  const supportMusicians = extractSupportMusicians(artist);
+  for (const { artist: supporter } of supportMusicians) {
+    const supporterNode: MusicianNode = {
+      id: supporter.id,
+      type: "musician",
+      name: supporter.name,
+      mbid: supporter.id,
+    };
+    graph.addNode(supporterNode);
+    graph.addEdge({
+      id: `${supporter.id}-support_musician-${mbid}`,
+      source: supporter.id,
+      target: mbid,
+      type: "support_musician",
+    });
+  }
+
+  // 4c. Process bands this artist has supported
+  const supportedBands = extractSupportedBands(artist);
+  for (const { artist: band } of supportedBands) {
+    const bandNode: ArtistNode = {
+      id: band.id,
+      type: "artist",
+      name: band.name,
+      mbid: band.id,
+      disambiguation: band.disambiguation,
+    };
+    graph.addNode(bandNode);
+    graph.addEdge({
+      id: `${mbid}-support_musician-${band.id}`,
+      source: mbid,
+      target: band.id,
+      type: "support_musician",
     });
   }
 

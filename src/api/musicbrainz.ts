@@ -173,6 +173,57 @@ export function extractBands(artist: MBArtist): Array<{
 }
 
 /**
+ * Get supporting musicians for a group (people who supported but aren't full members).
+ * MusicBrainz relationship type: "support musician" (direction backward = person supported this group).
+ */
+export function extractSupportMusicians(artist: MBArtist): Array<{
+  artist: MBArtist;
+}> {
+  if (!artist.relations) return [];
+
+  const seen = new Map<string, { artist: MBArtist }>();
+
+  for (const rel of artist.relations) {
+    if (
+      rel.type === "supporting musician" &&
+      rel["target-type"] === "artist" &&
+      rel.direction === "backward" &&
+      rel.artist &&
+      !seen.has(rel.artist.id)
+    ) {
+      seen.set(rel.artist.id, { artist: rel.artist });
+    }
+  }
+
+  return [...seen.values()];
+}
+
+/**
+ * Get groups a musician has supported (direction forward = person supported that group).
+ */
+export function extractSupportedBands(artist: MBArtist): Array<{
+  artist: MBArtist;
+}> {
+  if (!artist.relations) return [];
+
+  const seen = new Map<string, { artist: MBArtist }>();
+
+  for (const rel of artist.relations) {
+    if (
+      rel.type === "supporting musician" &&
+      rel["target-type"] === "artist" &&
+      rel.direction === "forward" &&
+      rel.artist &&
+      !seen.has(rel.artist.id)
+    ) {
+      seen.set(rel.artist.id, { artist: rel.artist });
+    }
+  }
+
+  return [...seen.values()];
+}
+
+/**
  * Get labels associated with an artist.
  */
 export function extractLabels(artist: MBArtist): Array<{ id: string; name: string }> {

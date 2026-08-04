@@ -8,15 +8,17 @@ A proof-of-concept React app that builds a music scene knowledge graph directly 
 
 - Vite + React 18 + TypeScript
 - react-force-graph-2d for graph visualization
-- In-memory graph (no database yet)
+- In-memory graph with localStorage persistence
 
 ## Architecture
 
 ```
 User searches artist
-    → MusicBrainz API: get artist, members, bands, labels
-    → Setlist.fm API (optional, off by default): get venues, cities, related artists
+    → Check request cache (localStorage, 48h TTL)
+    → If miss: MusicBrainz API: get artist, members, bands, labels
+    → If miss + enabled: Setlist.fm API: get venues, cities, related artists
     → In-memory SceneGraph accumulates nodes + edges
+    → Graph saved to localStorage
     → Force-directed graph renders in browser
 ```
 
@@ -26,24 +28,25 @@ User searches artist
 src/
 ├── api/
 │   ├── musicbrainz.ts    — Search, get relations, extract members/bands/labels. 1req/s rate limit.
-│   └── setlistfm.ts      — Get setlists, extract venues + related artists. Requires API key + enabled toggle.
+│   ├── setlistfm.ts      — Get setlists, extract venues + related artists. Requires API key + enabled toggle.
+│   └── cache.ts          — localStorage request cache with 48h TTL.
 ├── graph/
 │   ├── types.ts          — Node types: artist, musician, venue, city, scene, label, festival.
 │   │                       Edge types: member_of, played_at, located_in, signed_to, collaborated_with, etc.
-│   ├── SceneGraph.ts     — In-memory graph with dedup/merge, serializes to force-graph format.
-│   └── expand.ts         — Orchestrator: search → fetch → populate graph.
+│   ├── SceneGraph.ts     — In-memory graph with dedup/merge, persistence, expanded tracking.
+│   └── expand.ts         — Orchestrator: search → fetch → populate graph. Uses MB type field to distinguish Person vs Group.
 ├── components/
-│   ├── SearchBar.tsx     — Text input + expand button.
+│   ├── SearchBar.tsx     — Title, search input, expand, reset, settings. Responsive single/two-row layout.
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas.
-│   ├── InfoPanel.tsx     — Side panel showing clicked node details.
-│   ├── Settings.tsx      — Gear icon dropdown: API key, Setlist.fm toggle, debug mode toggle.
+│   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) showing clicked node details.
+│   ├── Settings.tsx      — Gear icon dropdown: API key, Setlist.fm toggle, debug toggle, clear all data.
 │   └── DebugConsole.tsx  — Collapsible log console showing API requests.
 ├── debug/
 │   └── DebugLog.ts       — Singleton log store with subscribe/notify pattern.
 ├── App.tsx               — State management, wires components together.
 ├── main.tsx              — Entry point.
 ├── vite-env.d.ts         — Vite client type declarations.
-└── index.css             — Dark theme base styles.
+└── index.css             — Dark theme, mobile media queries.
 
 .github/workflows/
 └── deploy.yml            — GitHub Actions workflow to build and deploy to GitHub Pages.
@@ -56,10 +59,18 @@ src/
 - Setlist.fm API key stored in browser localStorage, entered via settings UI.
 - CORS workaround for Setlist.fm: Vite proxy in dev, corsproxy.io in production.
 - Graph is additive: each search expands the same graph, revealing connections between artists.
+- Graph persists to localStorage; restored on page load. Reset button clears it.
+- Request caching: API responses cached in localStorage with 48h TTL. Repeat searches are instant.
+- MusicBrainz `type` field distinguishes Person (yellow musician node) from Group (red artist node).
+- MusicBrainz member deduplication: a member is "current" if any of their membership relationships is not ended (handles "original member" + "member" dual relationships).
+- Search prefers exact name match over MusicBrainz relevance ranking.
+- Expanded nodes render as solid fill; unexpanded as colored outlines.
+- Clicking a node prefills the search bar with a highlight flash.
 - MusicBrainz rate limit (1 req/sec) enforced client-side.
-- Node types have distinct colors; edge types have distinct colors.
-- Debug mode (toggle in settings) shows a collapsible console logging API requests. Minimized = last line; expanded = last 10 lines with scroll.
+- Debug mode (toggle in settings) shows a collapsible console logging API requests.
+- Responsive: single-row header on desktop, two-row on mobile. InfoPanel is sidebar on desktop, bottom sheet on mobile.
 - Deployable to GitHub Pages via `base: "/MusicSceneMap/"` in Vite config + GitHub Actions workflow.
+- Settings includes "Clear all stored data" button (wipes localStorage and reloads).
 
 ## Running
 
@@ -75,8 +86,7 @@ Requires: repo Settings → Pages → Source → GitHub Actions.
 
 ## What's missing / next steps
 
-- No persistence (graph is lost on refresh)
-- No "expand node" interaction (only search bar expands)
+- No "expand node" interaction (only search bar expands, though click prefills it)
 - No scene detection / community clustering
 - No travel mode
 - No legend on the graph canvas

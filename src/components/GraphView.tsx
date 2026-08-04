@@ -21,7 +21,7 @@ export function GraphView({ data, onNodeClick }: Props) {
   }, [data]);
 
   return (
-    <div ref={containerRef} style={{ flex: 1, position: "relative" }}>
+    <div ref={containerRef} style={{ flex: 1, position: "relative", overflow: "hidden", minWidth: 0 }}>
       <ForceGraph2D
         ref={graphRef as React.MutableRefObject<ForceGraphMethods | undefined>}
         graphData={data}

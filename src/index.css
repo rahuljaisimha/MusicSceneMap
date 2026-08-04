@@ -29,3 +29,20 @@ body {
     margin-right: auto;
   }
 }
+
+@keyframes highlight-fade {
+  0% {
+    background-color: rgba(255, 107, 107, 0.25);
+    border-color: #ff6b6b;
+    box-shadow: 0 0 8px rgba(255, 107, 107, 0.4);
+  }
+  100% {
+    background-color: #2a2a2a;
+    border-color: #444;
+    box-shadow: none;
+  }
+}
+
+.search-input-highlight {
+  animation: highlight-fade 2s ease-out forwards;
+}

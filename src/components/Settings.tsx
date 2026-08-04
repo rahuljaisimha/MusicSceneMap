@@ -90,6 +90,21 @@ export function Settings({ onKeyChange }: Props) {
             Debug mode
             <span style={styles.hint}> — show API request log</span>
           </label>
+
+          <div style={styles.divider} />
+
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm("Clear all stored data? This removes your graph, cache, and settings.")) {
+                localStorage.clear();
+                window.location.reload();
+              }
+            }}
+            style={styles.dangerBtn}
+          >
+            Clear all stored data
+          </button>
         </div>
       )}
     </div>
@@ -181,5 +196,16 @@ const styles: Record<string, React.CSSProperties> = {
   },
   checkbox: {
     accentColor: "#55efc4",
+  },
+  dangerBtn: {
+    width: "100%",
+    padding: "0.4rem 0.75rem",
+    borderRadius: "4px",
+    border: "1px solid #ff6b6b",
+    background: "transparent",
+    color: "#ff6b6b",
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: "0.8rem",
   },
 };

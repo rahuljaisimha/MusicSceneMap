@@ -100,46 +100,76 @@ export async function getArtistWithRelations(mbid: string): Promise<MBArtist> {
 
 /**
  * Get members of a group (artists related as "member of band").
+ * A member may have multiple relationships (e.g. "original member" + "member").
+ * They are considered current if ANY of their membership relationships is not ended.
  */
 export function extractMembers(artist: MBArtist): Array<{
   artist: MBArtist;
   current: boolean;
 }> {
   if (!artist.relations) return [];
-  return artist.relations
-    .filter(
-      (rel) =>
-        rel.type === "member of band" &&
-        rel["target-type"] === "artist" &&
-        rel.direction === "backward" &&
-        rel.artist
-    )
-    .map((rel) => ({
-      artist: rel.artist!,
-      current: !rel.ended,
-    }));
+
+  const memberMap = new Map<string, { artist: MBArtist; current: boolean }>();
+
+  for (const rel of artist.relations) {
+    if (
+      rel.type === "member of band" &&
+      rel["target-type"] === "artist" &&
+      rel.direction === "backward" &&
+      rel.artist
+    ) {
+      const existing = memberMap.get(rel.artist.id);
+      if (existing) {
+        // If any relationship is not ended, mark as current
+        if (!rel.ended) {
+          existing.current = true;
+        }
+      } else {
+        memberMap.set(rel.artist.id, {
+          artist: rel.artist,
+          current: !rel.ended,
+        });
+      }
+    }
+  }
+
+  return [...memberMap.values()];
 }
 
 /**
  * Get bands a musician belongs to.
+ * Deduplicates: a musician is "current" if any membership relationship is not ended.
  */
 export function extractBands(artist: MBArtist): Array<{
   artist: MBArtist;
   current: boolean;
 }> {
   if (!artist.relations) return [];
-  return artist.relations
-    .filter(
-      (rel) =>
-        rel.type === "member of band" &&
-        rel["target-type"] === "artist" &&
-        rel.direction === "forward" &&
-        rel.artist
-    )
-    .map((rel) => ({
-      artist: rel.artist!,
-      current: !rel.ended,
-    }));
+
+  const bandMap = new Map<string, { artist: MBArtist; current: boolean }>();
+
+  for (const rel of artist.relations) {
+    if (
+      rel.type === "member of band" &&
+      rel["target-type"] === "artist" &&
+      rel.direction === "forward" &&
+      rel.artist
+    ) {
+      const existing = bandMap.get(rel.artist.id);
+      if (existing) {
+        if (!rel.ended) {
+          existing.current = true;
+        }
+      } else {
+        bandMap.set(rel.artist.id, {
+          artist: rel.artist,
+          current: !rel.ended,
+        });
+      }
+    }
+  }
+
+  return [...bandMap.values()];
 }
 
 /**

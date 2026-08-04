@@ -48,6 +48,7 @@ export interface MBArtistSearchResult {
 export interface MBArtist {
   id: string; // MBID
   name: string;
+  type?: "Person" | "Group" | "Orchestra" | "Choir" | "Character" | "Other";
   disambiguation?: string;
   country?: string;
   "life-span"?: { begin?: string; end?: string; ended?: boolean };

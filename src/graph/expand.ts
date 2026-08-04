@@ -39,15 +39,23 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
   // 2. Get full artist with relations
   const artist = await getArtistWithRelations(mbid);
 
-  // Add the artist node
-  const artistNode: ArtistNode = {
-    id: mbid,
-    type: "artist",
-    name: artist.name,
-    mbid,
-    disambiguation: artist.disambiguation,
-    country: artist.country,
-  };
+  // Add the artist node (use MB type to distinguish person vs group)
+  const isPerson = artist.type === "Person";
+  const artistNode: ArtistNode | MusicianNode = isPerson
+    ? {
+        id: mbid,
+        type: "musician",
+        name: artist.name,
+        mbid,
+      }
+    : {
+        id: mbid,
+        type: "artist",
+        name: artist.name,
+        mbid,
+        disambiguation: artist.disambiguation,
+        country: artist.country,
+      };
   graph.addNode(artistNode);
   graph.markExpanded(mbid);
 

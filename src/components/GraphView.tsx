@@ -40,20 +40,17 @@ export function GraphView({ data, onNodeClick }: Props) {
           const size = ((node as { val?: number }).val ?? 1) * 2;
           const isExpanded = (node as { expanded?: boolean }).expanded ?? false;
 
-          // Draw expanded indicator ring
-          if (isExpanded) {
-            ctx.beginPath();
-            ctx.arc(node.x ?? 0, node.y ?? 0, size + 3, 0, 2 * Math.PI);
-            ctx.strokeStyle = "#fff";
-            ctx.lineWidth = 1.5 / globalScale;
-            ctx.stroke();
-          }
-
-          // Draw circle
+          // Draw node: solid fill if expanded, outline only if not
           ctx.beginPath();
           ctx.arc(node.x ?? 0, node.y ?? 0, size, 0, 2 * Math.PI);
-          ctx.fillStyle = nodeColor;
-          ctx.fill();
+          if (isExpanded) {
+            ctx.fillStyle = nodeColor;
+            ctx.fill();
+          } else {
+            ctx.strokeStyle = nodeColor;
+            ctx.lineWidth = 3 / globalScale;
+            ctx.stroke();
+          }
 
           // Draw label
           if (globalScale > 0.7) {

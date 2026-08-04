@@ -35,16 +35,8 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
 
   return (
     <form onSubmit={handleSubmit} style={styles.form}>
-      <div style={styles.topRow}>
-        <div style={styles.title}>MusicSceneMap</div>
-        <div style={styles.topActions}>
-          <button type="button" onClick={onReset} style={styles.resetBtn} title="Clear graph">
-            Reset
-          </button>
-          <Settings onKeyChange={() => {}} />
-        </div>
-      </div>
-      <div style={styles.searchRow}>
+      <div className="header-title" style={styles.title}>MusicSceneMap</div>
+      <div className="search-group" style={styles.searchGroup}>
         <input
           ref={inputRef}
           type="text"
@@ -62,6 +54,10 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
           {loading ? "Loading…" : "Expand"}
         </button>
       </div>
+      <button type="button" onClick={onReset} style={styles.resetBtn} title="Clear graph">
+        Reset
+      </button>
+      <Settings onKeyChange={() => {}} />
     </form>
   );
 }
@@ -69,26 +65,12 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
 const styles: Record<string, React.CSSProperties> = {
   form: {
     display: "flex",
-    flexDirection: "column",
+    alignItems: "center",
     gap: "0.5rem",
     padding: "0.5rem 0.75rem",
     borderBottom: "1px solid #2a2a2a",
     background: "#1a1a1a",
-  },
-  topRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  topActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-  },
-  searchRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
+    flexWrap: "wrap",
   },
   title: {
     fontWeight: 700,
@@ -96,8 +78,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#ff6b6b",
     whiteSpace: "nowrap",
   },
+  searchGroup: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    flex: "1 1 250px",
+    minWidth: "0",
+  },
   input: {
-    flex: 1,
+    flex: "1 1 0",
     minWidth: "0",
     padding: "0.5rem 0.75rem",
     borderRadius: "4px",

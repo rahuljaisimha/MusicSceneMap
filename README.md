@@ -29,6 +29,34 @@ or:
 
 ---
 
+# Current Implementation
+
+The project currently has two working features, powered by a precomputed SQLite database (built from MusicBrainz data dumps) queried directly in the browser via WebAssembly:
+
+## Explore
+
+Search for any artist or band and visualize their network — band members, side projects, and supporting musicians rendered as an interactive force-directed graph. Click nodes to explore further.
+
+## Six Degrees of Music (Game)
+
+A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships, supporting roles, and album collaborations. The app computes the shortest path and shows you a "par" to beat.
+
+## Running
+
+```bash
+npm install
+npm run dev
+```
+
+The app requires `public/graph.db` (generated from MusicBrainz data):
+
+```bash
+brew install zstd
+python3 scripts/process_mb_dump.py
+```
+
+---
+
 # Motivation
 
 Music discovery often happens through communities.

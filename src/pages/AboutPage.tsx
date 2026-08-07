@@ -45,8 +45,8 @@ export function AboutPage() {
 
         <h2 style={styles.heading}>Source Code</h2>
         <p style={styles.paragraph}>
-          <a href="https://github.com/jaisimha/MusicSceneMap" target="_blank" rel="noreferrer" style={styles.link}>
-            github.com/jaisimha/MusicSceneMap
+          <a href="https://github.com/rahuljaisimha/MusicSceneMap" target="_blank" rel="noreferrer" style={styles.link}>
+            github.com/rahuljaisimha/MusicSceneMap
           </a>
         </p>
 

@@ -1,9 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  base: "/MusicSceneMap/",
+  base: mode === "production" ? "/MusicSceneMap/" : "/",
   server: {
     proxy: {
       "/setlistfm-api": {
@@ -13,4 +13,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

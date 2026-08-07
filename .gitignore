@@ -2,3 +2,12 @@ node_modules
 dist
 .DS_Store
 *.local
+
+# MusicBrainz dump processing (large files)
+scripts/data
+
+# Generated game graph database (output of process_mb_dump.py)
+public/graph.db
+public/graph.db.gz
+public/graph.db-shm
+public/graph.db-wal

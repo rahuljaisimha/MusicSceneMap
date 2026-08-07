@@ -32,7 +32,6 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
 
   return (
     <form onSubmit={handleSubmit} style={styles.form}>
-      <div className="header-title" style={styles.title}>MusicSceneMap</div>
       <div className="search-group" style={styles.searchGroup}>
         <input
           key={highlightKey}
@@ -67,12 +66,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: "1px solid #2a2a2a",
     background: "#1a1a1a",
     flexWrap: "wrap",
-  },
-  title: {
-    fontWeight: 700,
-    fontSize: "1.1rem",
-    color: "#ff6b6b",
-    whiteSpace: "nowrap",
   },
   searchGroup: {
     display: "flex",

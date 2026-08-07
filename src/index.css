@@ -24,10 +24,6 @@ body {
     order: 10;
     flex-basis: 100% !important;
   }
-
-  .header-title {
-    margin-right: auto;
-  }
 }
 
 @keyframes highlight-fade {

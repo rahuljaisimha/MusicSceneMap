@@ -35,9 +35,7 @@ export async function getDb(): Promise<DB> {
 
     const SQL = await initSqlJs(config);
 
-    // Fetch the database file
-    // In dev: Vite serves graph.db.gz with Content-Encoding: gzip (browser decompresses transparently)
-    // In prod: GitHub Pages / CDN handles compression
+    // Fetch the database file (gzipped)
     const dbUrl = `${import.meta.env.BASE_URL}graph.db.gz`;
 
     const response = await fetch(dbUrl);
@@ -46,7 +44,22 @@ export async function getDb(): Promise<DB> {
         "graph.db.gz not found. Run 'python3 scripts/process_mb_dump.py' to generate it."
       );
     }
-    const buffer = await response.arrayBuffer();
+
+    let buffer = await response.arrayBuffer();
+
+    // Check if we need to manually decompress:
+    // If Content-Encoding: gzip was set, browser already decompressed it.
+    // If not (e.g., GitHub Pages), we get raw gzip bytes — detect via magic number.
+    const header = new Uint8Array(buffer, 0, 2);
+    if (header[0] === 0x1f && header[1] === 0x8b) {
+      // Gzip magic number detected — need manual decompression
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      writer.write(new Uint8Array(buffer));
+      writer.close();
+      buffer = await new Response(ds.readable).arrayBuffer();
+    }
+
     const instance = new SQL.Database(new Uint8Array(buffer));
     db = instance as unknown as DB;
     return db;

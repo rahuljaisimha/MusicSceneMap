@@ -154,7 +154,12 @@ export function PlayPage() {
   // Load saved game or generate new one
   useEffect(() => {
     (async () => {
-      await getDb();
+      try {
+        await getDb();
+      } catch (e) {
+        setState({ status: "error", error: e instanceof Error ? e.message : "Failed to load database", guesses: [], revealed: false });
+        return;
+      }
       const saved = loadGame();
       if (saved) {
         setState({

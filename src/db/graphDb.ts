@@ -19,15 +19,6 @@ let db: DB | null = null;
 let loadingPromise: Promise<DB> | null = null;
 
 /**
- * Decompress a gzipped response using the browser's DecompressionStream API.
- */
-async function decompressGzip(response: Response): Promise<ArrayBuffer> {
-  const ds = new DecompressionStream("gzip");
-  const decompressedStream = response.body!.pipeThrough(ds);
-  return new Response(decompressedStream).arrayBuffer();
-}
-
-/**
  * Load the SQLite database from the public directory.
  * Returns the same instance if already loaded.
  */
@@ -36,7 +27,7 @@ export async function getDb(): Promise<DB> {
   if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
-    // Copy sql-wasm.wasm to public/ directory. Serve from same origin.
+    // Load sql.js WASM
     const wasmUrl = `${window.location.origin}${import.meta.env.BASE_URL}sql-wasm.wasm`;
     const config: SqlJsConfig = {
       locateFile: () => wasmUrl,
@@ -44,25 +35,18 @@ export async function getDb(): Promise<DB> {
 
     const SQL = await initSqlJs(config);
 
-    // Fetch the database file (gzipped) — try local first, fall back to remote
-    const localUrl = `${import.meta.env.BASE_URL}graph.db.gz`;
-    const remoteUrl = "https://github.com/rahuljaisimha/MusicSceneMap/releases/download/data/graph.db.gz";
+    // Fetch the database file
+    // In dev: Vite serves graph.db.gz with Content-Encoding: gzip (browser decompresses transparently)
+    // In prod: GitHub Pages / CDN handles compression
+    const dbUrl = `${import.meta.env.BASE_URL}graph.db.gz`;
 
-    let buffer: ArrayBuffer;
-    try {
-      const localResponse = await fetch(localUrl);
-      if (localResponse.ok && localResponse.headers.get("content-type") !== "text/html") {
-        buffer = await decompressGzip(localResponse);
-      } else {
-        throw new Error("Local not available");
-      }
-    } catch {
-      const remoteResponse = await fetch(remoteUrl);
-      if (!remoteResponse.ok) {
-        throw new Error(`Failed to load graph.db.gz: ${remoteResponse.status}`);
-      }
-      buffer = await decompressGzip(remoteResponse);
+    const response = await fetch(dbUrl);
+    if (!response.ok || response.headers.get("content-type") === "text/html") {
+      throw new Error(
+        "graph.db.gz not found. Run 'python3 scripts/process_mb_dump.py' to generate it."
+      );
     }
+    const buffer = await response.arrayBuffer();
     const instance = new SQL.Database(new Uint8Array(buffer));
     db = instance as unknown as DB;
     return db;

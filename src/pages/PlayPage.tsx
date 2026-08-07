@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { GAME_ARTISTS, type GameArtist } from "../game/artists";
-import { getDb, findNodeByName, bfsShortestPath, findNodeById, searchNodes } from "../db/graphDb";
+import { getDb, findNodeByName, bfsShortestPath, findNodeById, getNeighbors } from "../db/graphDb";
 import { DebugConsole } from "../components/DebugConsole";
 import { debugLog } from "../debug/DebugLog";
 
@@ -125,10 +125,83 @@ async function generateGame(): Promise<StoredGame | null> {
   return null;
 }
 
+function relTypePriority(relType: string): number {
+  switch (relType) {
+    case "member_of": return 0;
+    case "former_member_of": return 1;
+    case "album_by": return 2;
+    case "support_musician": return 3;
+    case "vocal": return 4;
+    case "instrument": return 5;
+    case "producer": return 6;
+    case "mix": return 7;
+    case "engineer": return 8;
+    case "recording": return 9;
+    default: return 10;
+  }
+}
+
+function formatRelType(relType: string, nodeType: string): string {
+  switch (relType) {
+    case "member_of": return nodeType === "group" ? "band" : "member";
+    case "former_member_of": return nodeType === "group" ? "former band" : "former member";
+    case "support_musician": return nodeType === "group" ? "supported" : "support musician";
+    case "producer": return "producer";
+    case "vocal": return "vocals";
+    case "instrument": return "instrument";
+    case "mix": return "mix";
+    case "engineer": return "engineer";
+    case "recording": return "recording";
+    case "album_by": return "album by";
+    default: return relType.replace(/_/g, " ");
+  }
+}
+
 export function PlayPage() {
   const [state, setState] = useState<GameState>({ status: "loading", guesses: [], revealed: false });
   const [input, setInput] = useState("");
-  const [suggestions, setSuggestions] = useState<Array<{ id: string; name: string; type: string }>>([]);
+
+  // Compute current node: last guess resolved to ID, or start node
+  const currentNodeId = (() => {
+    if (state.status !== "playing") return null;
+    if (state.guesses.length === 0) return state.startId!;
+    const lastGuess = state.guesses[state.guesses.length - 1]!;
+    const node = findNodeByName(lastGuess);
+    return node?.id ?? null;
+  })();
+
+  // Build set of already-visited node IDs (start + all guesses)
+  const visitedIds = (() => {
+    if (state.status !== "playing") return new Set<string>();
+    const ids = new Set<string>();
+    ids.add(state.startId!);
+    for (const guess of state.guesses) {
+      const node = findNodeByName(guess);
+      if (node) ids.add(node.id);
+    }
+    return ids;
+  })();
+
+  // Get valid next moves (neighbors of current node, excluding already-visited and compilations)
+  const validMoves = (() => {
+    if (!currentNodeId) return [];
+    const neighbors = getNeighbors(currentNodeId);
+    return neighbors
+      .filter((n) => !visitedIds.has(n.node.id))
+      .map((n) => ({ id: n.node.id, name: n.node.name, type: n.node.type, relType: n.relType }))
+      .filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i) // dedupe
+      .sort((a, b) => {
+        // Sort by relationship priority first, then alphabetically
+        const priority = relTypePriority(a.relType) - relTypePriority(b.relType);
+        if (priority !== 0) return priority;
+        return a.name.localeCompare(b.name);
+      });
+  })();
+
+  // Filter valid moves by input text
+  const filteredMoves = input.trim()
+    ? validMoves.filter((m) => m.name.toLowerCase().includes(input.toLowerCase()))
+    : validMoves;
 
   const startNewGame = useCallback(async () => {
     clearGame();
@@ -194,23 +267,31 @@ export function PlayPage() {
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleInputChange = (value: string) => {
-    setInput(value);
-    if (value.length >= 2) {
-      const results = searchNodes(value, 8);
-      setSuggestions(results);
-    } else {
-      setSuggestions([]);
-    }
-  };
-
   const handleGuess = (name?: string) => {
     const guess = name ?? input.trim();
     if (!guess || state.status !== "playing") return;
     const newGuesses = [...state.guesses, guess];
     setInput("");
-    setSuggestions([]);
 
+    const newState = { ...state, guesses: newGuesses };
+    setState(newState);
+    saveGame({
+      startArtist: state.startArtist!,
+      endArtist: state.endArtist!,
+      startId: state.startId!,
+      endId: state.endId!,
+      shortestPath: state.shortestPath!,
+      par: state.par!,
+      guesses: newGuesses,
+      revealed: state.revealed,
+      timestamp: Date.now(),
+    });
+  };
+
+  const handleUndo = () => {
+    if (state.status !== "playing" || state.guesses.length === 0) return;
+    const newGuesses = state.guesses.slice(0, -1);
+    setInput("");
     const newState = { ...state, guesses: newGuesses };
     setState(newState);
     saveGame({
@@ -288,51 +369,52 @@ export function PlayPage() {
 
             {!state.revealed && (
               <div style={styles.inputSection}>
-                <p style={styles.inputLabel}>
-                  Build your path ({state.guesses.length} steps so far):
-                </p>
+                <div style={styles.guessList}>
+                  <span style={styles.guessChip}>{state.startArtist!.name}</span>
+                  {state.guesses.map((g, i) => (
+                    <span key={i} style={styles.guessStep}>
+                      <span style={styles.chainArrow}>→</span>
+                      <span style={i === state.guesses.length - 1 ? styles.guessChipCurrent : styles.guessChip}>{g}</span>
+                    </span>
+                  ))}
+                  <span style={styles.chainArrow}>→ ?</span>
+                </div>
+                <div style={styles.pathActions}>
+                  <span style={styles.stepCount}>{state.guesses.length} steps</span>
+                  {state.guesses.length > 0 && (
+                    <button onClick={handleUndo} style={styles.undoBtn}>
+                      ← Undo
+                    </button>
+                  )}
+                </div>
                 <div style={styles.inputRow}>
                   <input
                     type="text"
                     value={input}
-                    onChange={(e) => handleInputChange(e.target.value)}
+                    onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Type an artist or band name"
+                    placeholder="Filter connections…"
                     style={styles.input}
-                    aria-label="Guess artist or band"
+                    aria-label="Filter connections"
                   />
-                  <button onClick={() => handleGuess()} disabled={!input.trim()} style={styles.guessBtn}>
-                    Add
-                  </button>
                 </div>
-                {suggestions.length > 0 && (
-                  <div style={styles.suggestions}>
-                    {suggestions.map((s) => (
+                <div style={styles.movesList}>
+                  {filteredMoves.length > 0 ? (
+                    filteredMoves.map((m) => (
                       <button
-                        key={s.id}
+                        key={m.id}
                         type="button"
-                        onClick={() => handleGuess(s.name)}
-                        style={styles.suggestionItem}
+                        onClick={() => handleGuess(m.name)}
+                        style={styles.moveItem}
                       >
-                        {s.name} <span style={styles.suggestionType}>{s.type}</span>
+                        <span style={styles.moveName}>{m.name}</span>
+                        <span style={styles.moveRel}>{formatRelType(m.relType, m.type)}</span>
                       </button>
-                    ))}
-                  </div>
-                )}
-                {state.guesses.length > 0 && (
-                  <div style={styles.guessList}>
-                    <p style={styles.guessLabel}>Your path:</p>
-                    <span style={styles.guessChip}>{state.startArtist!.name}</span>
-                    <span style={styles.chainArrow}>→</span>
-                    {state.guesses.map((g, i) => (
-                      <span key={i}>
-                        <span style={styles.guessChip}>{g}</span>
-                        <span style={styles.chainArrow}>→</span>
-                      </span>
-                    ))}
-                    <span style={styles.guessChip}>{state.endArtist!.name}</span>
-                  </div>
-                )}
+                    ))
+                  ) : (
+                    <p style={styles.noMoves}>No matching connections</p>
+                  )}
+                </div>
                 <button onClick={handleReveal} style={styles.revealBtn}>
                   Reveal Shortest Path
                 </button>
@@ -402,14 +484,21 @@ const styles: Record<string, React.CSSProperties> = {
   inputRow: { display: "flex", gap: "0.5rem", width: "100%" },
   input: { flex: 1, padding: "0.5rem 0.75rem", borderRadius: "4px", border: "1px solid #444", background: "#2a2a2a", color: "#e0e0e0", fontSize: "16px" },
   guessBtn: { padding: "0.5rem 1rem", borderRadius: "4px", border: "none", background: "#feca57", color: "#000", fontWeight: 600, cursor: "pointer" },
-  suggestions: { width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: "4px", maxHeight: "200px", overflowY: "auto" },
-  suggestionItem: { display: "block", width: "100%", textAlign: "left", padding: "0.4rem 0.75rem", background: "none", border: "none", borderBottom: "1px solid #2a2a2a", color: "#e0e0e0", cursor: "pointer", fontSize: "0.85rem" },
-  suggestionType: { color: "#666", fontSize: "0.75rem", marginLeft: "0.5rem" },
-  guessList: { display: "flex", flexWrap: "wrap", gap: "0.3rem", alignItems: "center" },
+  movesList: { width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: "4px", maxHeight: "250px", overflowY: "auto" },
+  moveItem: { display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "0.5rem 0.75rem", background: "none", border: "none", borderBottom: "1px solid #2a2a2a", color: "#e0e0e0", cursor: "pointer", fontSize: "0.85rem", textAlign: "left" },
+  moveName: { flex: 1 },
+  moveRel: { color: "#666", fontSize: "0.7rem", marginLeft: "0.5rem", whiteSpace: "nowrap" },
+  noMoves: { color: "#666", fontSize: "0.8rem", padding: "0.75rem", textAlign: "center" },
+  guessList: { display: "flex", flexWrap: "wrap", gap: "0.25rem", alignItems: "center" },
+  guessStep: { display: "flex", alignItems: "center", gap: "0.25rem" },
   guessLabel: { color: "#888", fontSize: "0.8rem", width: "100%", marginBottom: "0.25rem" },
   guessChip: { padding: "0.2rem 0.6rem", borderRadius: "12px", fontSize: "0.8rem", background: "#2a2a2a", color: "#e0e0e0", border: "1px solid #444" },
-  chainArrow: { color: "#555", margin: "0 0.15rem", fontSize: "0.8rem" },
-  revealBtn: { padding: "0.5rem 1rem", borderRadius: "4px", border: "1px solid #444", background: "transparent", color: "#888", cursor: "pointer", fontSize: "0.85rem", marginTop: "0.5rem" },
+  guessChipCurrent: { padding: "0.2rem 0.6rem", borderRadius: "12px", fontSize: "0.8rem", background: "#2a2a2a", color: "#feca57", border: "1px solid #feca57" },
+  chainArrow: { color: "#555", fontSize: "0.8rem" },
+  revealBtn: { padding: "0.5rem 1rem", borderRadius: "4px", border: "1px solid #444", background: "transparent", color: "#888", cursor: "pointer", fontSize: "0.85rem" },
+  pathActions: { display: "flex", alignItems: "center", gap: "0.75rem" },
+  stepCount: { color: "#888", fontSize: "0.8rem" },
+  undoBtn: { padding: "0.3rem 0.75rem", borderRadius: "4px", border: "1px solid #feca57", background: "transparent", color: "#feca57", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 },
   revealSection: { display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem" },
   revealLabel: { color: "#55efc4", fontWeight: 600, fontSize: "0.9rem" },
   chainDisplay: { display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: "0.25rem" },

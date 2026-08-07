@@ -697,14 +697,35 @@ def build_graph(
     # Insert artist-artist edges (deduplicated in Python)
     edge_count = 0
     seen_edges = set()
+
+    # Deduplicate memberships: if any relationship for (person, band) is not ended, treat as current
+    membership_status: dict[tuple[str, str], bool] = {}  # (gid0, gid1) → is_current
+    for e0, e1, rel_type, ended in relationships:
+        if rel_type != "member of band":
+            continue
+        gid0 = id_to_gid.get(e0)
+        gid1 = id_to_gid.get(e1)
+        if not gid0 or not gid1:
+            continue
+        key = (gid0, gid1)
+        if key in membership_status:
+            # If any relationship is not ended, mark as current
+            if not ended:
+                membership_status[key] = True
+        else:
+            membership_status[key] = not ended
+
     for e0, e1, rel_type, ended in relationships:
         gid0 = id_to_gid.get(e0)
         gid1 = id_to_gid.get(e1)
         if gid0 and gid1:
             mapped_type = edge_type_map.get(rel_type, rel_type)
-            # Mark ended memberships as former_member_of
-            if mapped_type == "member_of" and ended:
-                mapped_type = "former_member_of"
+            if mapped_type == "member_of":
+                # Use the deduplicated status
+                pair_key = (gid0, gid1)
+                is_current = membership_status.get(pair_key, not ended)
+                if not is_current:
+                    mapped_type = "former_member_of"
             key = (gid0, gid1, mapped_type)
             if key not in seen_edges:
                 seen_edges.add(key)

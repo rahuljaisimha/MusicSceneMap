@@ -164,7 +164,7 @@ export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType:
  * BFS shortest path between two nodes.
  * Returns the path as an array of node IDs (including start and end), or null if no path.
  */
-export function bfsShortestPath(startId: string, endId: string, maxDepth = 10): string[] | null {
+export function bfsShortestPath(startId: string, endId: string, maxDepth = 10, allowedRelTypes?: Set<string>): string[] | null {
   if (!db) return null;
   if (startId === endId) return [startId];
 
@@ -176,7 +176,7 @@ export function bfsShortestPath(startId: string, endId: string, maxDepth = 10): 
     const nextFrontier: string[] = [];
 
     for (const nodeId of frontier) {
-      const neighbors = getNeighborIds(nodeId);
+      const neighbors = getNeighborIds(nodeId, allowedRelTypes);
       for (const neighborId of neighbors) {
         if (visited.has(neighborId)) continue;
         visited.add(neighborId);
@@ -239,24 +239,28 @@ function isCompilation(nodeId: string): boolean {
   return getAlbumDegree(nodeId) > MAX_ALBUM_DEGREE;
 }
 
-function getNeighborIds(nodeId: string): string[] {
+function getNeighborIds(nodeId: string, allowedRelTypes?: Set<string>): string[] {
   if (!db) return [];
   const ids: string[] = [];
 
-  const stmt1 = db.prepare("SELECT target FROM edges WHERE source = ?");
+  const stmt1 = db.prepare("SELECT target, rel_type FROM edges WHERE source = ?");
   stmt1.bind([nodeId]);
   while (stmt1.step()) {
     const id = stmt1.get()[0] as string;
+    const relType = stmt1.get()[1] as string;
+    if (allowedRelTypes && !allowedRelTypes.has(relType)) continue;
     if (!isCompilation(id)) {
       ids.push(id);
     }
   }
   stmt1.free();
 
-  const stmt2 = db.prepare("SELECT source FROM edges WHERE target = ?");
+  const stmt2 = db.prepare("SELECT source, rel_type FROM edges WHERE target = ?");
   stmt2.bind([nodeId]);
   while (stmt2.step()) {
     const id = stmt2.get()[0] as string;
+    const relType = stmt2.get()[1] as string;
+    if (allowedRelTypes && !allowedRelTypes.has(relType)) continue;
     if (!isCompilation(id)) {
       ids.push(id);
     }

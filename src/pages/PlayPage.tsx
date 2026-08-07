@@ -4,6 +4,9 @@ import { getDb, findNodeByName, bfsShortestPath, findNodeById, getNeighbors } fr
 import { DebugConsole } from "../components/DebugConsole";
 import { debugLog } from "../debug/DebugLog";
 
+/** Only these relationship types are used in the game */
+const GAME_REL_TYPES = new Set(["member_of", "former_member_of", "support_musician"]);
+
 interface GameState {
   status: "loading" | "error" | "playing";
   error?: string;
@@ -91,7 +94,7 @@ async function generateGame(): Promise<StoredGame | null> {
 
     // Find shortest path
     debugLog.log(`Game: BFS from "${startArtist.name}" to "${endArtist.name}"...`);
-    const path = bfsShortestPath(startNode.id, endNode.id);
+    const path = bfsShortestPath(startNode.id, endNode.id, 10, GAME_REL_TYPES);
 
     if (!path) {
       debugLog.log(`Game: no path found, retrying`);
@@ -188,6 +191,7 @@ export function PlayPage() {
     const neighbors = getNeighbors(currentNodeId);
     return neighbors
       .filter((n) => !visitedIds.has(n.node.id))
+      .filter((n) => GAME_REL_TYPES.has(n.relType))
       .map((n) => ({ id: n.node.id, name: n.node.name, type: n.node.type, relType: n.relType }))
       .filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i) // dedupe
       .sort((a, b) => {

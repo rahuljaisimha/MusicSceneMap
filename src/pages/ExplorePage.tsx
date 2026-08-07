@@ -22,6 +22,7 @@ function mapNodeType(dbType: string): NodeType {
 function mapEdgeType(dbRelType: string): EdgeType {
   switch (dbRelType) {
     case "member_of": return "member_of";
+    case "former_member_of": return "former_member_of";
     case "support_musician": return "support_musician";
     case "producer": return "collaborated_with";
     case "vocal": return "collaborated_with";
@@ -29,7 +30,7 @@ function mapEdgeType(dbRelType: string): EdgeType {
     case "mix": return "collaborated_with";
     case "engineer": return "collaborated_with";
     case "recording": return "collaborated_with";
-    case "album_by": return "signed_to"; // reuse signed_to visuals for album ownership
+    case "album_by": return "signed_to";
     default: return "collaborated_with";
   }
 }

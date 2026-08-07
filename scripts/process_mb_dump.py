@@ -197,8 +197,8 @@ def parse_link_types(data_dir: Path) -> dict[int, str]:
     return link_types
 
 
-def parse_links(data_dir: Path) -> dict[int, int]:
-    """Parse link table to map link_id → link_type_id."""
+def parse_links(data_dir: Path) -> dict[int, tuple[int, bool]]:
+    """Parse link table to map link_id → (link_type_id, ended)."""
     links = {}
     link_file = data_dir / "mbdump" / "link"
 
@@ -206,10 +206,11 @@ def parse_links(data_dir: Path) -> dict[int, int]:
     with open(link_file, "r", encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split("\t")
-            if len(parts) >= 2:
+            if len(parts) >= 11:
                 link_id = int(parts[0])
                 link_type_id = int(parts[1])
-                links[link_id] = link_type_id
+                ended = parts[10] == "t"
+                links[link_id] = (link_type_id, ended)
 
     print(f"  Found {len(links)} links")
     return links
@@ -249,11 +250,11 @@ def parse_artists(data_dir: Path) -> dict[int, dict]:
 
 def parse_artist_relationships(
     data_dir: Path,
-    links: dict[int, int],
+    links: dict[int, tuple[int, bool]],
     link_types: dict[int, str],
     relevant_type_ids: set[int],
-) -> list[tuple[int, int, str]]:
-    """Parse l_artist_artist table. Returns list of (artist0_id, artist1_id, rel_type_name)."""
+) -> list[tuple[int, int, str, bool]]:
+    """Parse l_artist_artist table. Returns list of (artist0_id, artist1_id, rel_type_name, ended)."""
     relationships = []
     rel_file = data_dir / "mbdump" / "l_artist_artist"
 
@@ -267,10 +268,12 @@ def parse_artist_relationships(
                 entity0 = int(parts[2])
                 entity1 = int(parts[3])
 
-                link_type_id = links.get(link_id)
-                if link_type_id and link_type_id in relevant_type_ids:
-                    type_name = link_types[link_type_id]
-                    relationships.append((entity0, entity1, type_name))
+                link_info = links.get(link_id)
+                if link_info:
+                    link_type_id, ended = link_info
+                    if link_type_id in relevant_type_ids:
+                        type_name = link_types[link_type_id]
+                        relationships.append((entity0, entity1, type_name, ended))
 
     print(f"  Found {len(relationships)} relevant relationships")
     return relationships
@@ -459,10 +462,12 @@ def parse_artist_recording_relationships(
                 artist_id = int(parts[2])
                 recording_id = int(parts[3])
 
-                link_type_id = links.get(link_id)
-                if link_type_id and link_type_id in relevant_type_ids:
-                    type_name = link_types[link_type_id]
-                    relationships.append((artist_id, recording_id, type_name))
+                link_info = links.get(link_id)
+                if link_info:
+                    link_type_id, _ = link_info
+                    if link_type_id in relevant_type_ids:
+                        type_name = link_types[link_type_id]
+                        relationships.append((artist_id, recording_id, type_name))
 
     print(f"  Found {len(relationships)} relevant artist-recording relationships")
     return relationships
@@ -555,7 +560,7 @@ def bfs_reachable(
         id_to_gid_map[aid] = data["gid"]
 
     adjacency: dict[int, set[int]] = defaultdict(set)
-    for e0, e1, _ in relationships:
+    for e0, e1, _, _ in relationships:
         adjacency[e0].add(e1)
         adjacency[e1].add(e0)
 
@@ -692,11 +697,14 @@ def build_graph(
     # Insert artist-artist edges (deduplicated in Python)
     edge_count = 0
     seen_edges = set()
-    for e0, e1, rel_type in relationships:
+    for e0, e1, rel_type, ended in relationships:
         gid0 = id_to_gid.get(e0)
         gid1 = id_to_gid.get(e1)
         if gid0 and gid1:
             mapped_type = edge_type_map.get(rel_type, rel_type)
+            # Mark ended memberships as former_member_of
+            if mapped_type == "member_of" and ended:
+                mapped_type = "former_member_of"
             key = (gid0, gid1, mapped_type)
             if key not in seen_edges:
                 seen_edges.add(key)

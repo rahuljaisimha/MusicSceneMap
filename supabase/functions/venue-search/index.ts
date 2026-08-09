@@ -148,20 +148,29 @@ async function fetchAndStore(mbid: string, city: string) {
   const data = await response.json();
   const setlists = data.setlist || [];
 
-  // Aggregate venues
+  // Aggregate venues and track venue+date for toured_with detection
   const venueMap = new Map<string, { venue: any; count: number }>();
+  const showsByVenueDate = new Map<string, { venueId: string; date: string }>();
+
   for (const setlist of setlists) {
     const venue = setlist.venue;
     if (!venue) continue;
+
     const existing = venueMap.get(venue.id);
     if (existing) {
       existing.count++;
     } else {
       venueMap.set(venue.id, { venue, count: 1 });
     }
+
+    // Track for toured_with detection
+    const eventDate = setlist.eventDate;
+    if (eventDate && venue.id) {
+      showsByVenueDate.set(`${venue.id}_${eventDate}`, { venueId: venue.id, date: eventDate });
+    }
   }
 
-  // Store venues and relationships
+  // Store venues and played_at relationships
   for (const [venueId, { venue, count }] of venueMap) {
     const venueCity = venue.city || {};
 
@@ -175,7 +184,7 @@ async function fetchAndStore(mbid: string, city: string) {
     }, { onConflict: "id" });
 
     // Upsert played_at relationship
-    const { data: existing } = await supabase
+    const { data: existingRel } = await supabase
       .from("relationships")
       .select("id, count")
       .eq("source_id", mbid)
@@ -183,11 +192,11 @@ async function fetchAndStore(mbid: string, city: string) {
       .eq("rel_type", "played_at")
       .single();
 
-    if (existing) {
+    if (existingRel) {
       await supabase
         .from("relationships")
-        .update({ count: Math.max(existing.count, count) })
-        .eq("id", existing.id);
+        .update({ count: Math.max(existingRel.count, count) })
+        .eq("id", existingRel.id);
     } else {
       await supabase.from("relationships").insert({
         source_id: mbid,
@@ -196,6 +205,63 @@ async function fetchAndStore(mbid: string, city: string) {
         count,
       });
     }
+  }
+
+  // Detect toured_with: for each venue this artist played at,
+  // check if other artists played there on the same date
+  for (const { venueId, date } of showsByVenueDate.values()) {
+    try {
+      // Query venue setlists for that date (uses 1 API request per venue+date check)
+      // To be conservative with API limits, only check the first 3 venues
+      const venueResponse = await fetch(
+        `${SETLISTFM_BASE}/venue/${venueId}/setlists?p=1`,
+        { headers: { Accept: "application/json", "x-api-key": SETLISTFM_API_KEY } }
+      );
+
+      if (!venueResponse.ok) continue;
+
+      const venueData = await venueResponse.json();
+      const venueSetlists = venueData.setlist || [];
+
+      // Find other artists who played at this venue on the same date
+      for (const vs of venueSetlists) {
+        if (vs.eventDate !== date) continue;
+        if (!vs.artist?.mbid || vs.artist.mbid === mbid) continue;
+
+        const otherMbid = vs.artist.mbid;
+
+        // Store toured_with (consistent ordering)
+        const [a, b] = [mbid, otherMbid].sort();
+        const { data: existingTour } = await supabase
+          .from("relationships")
+          .select("id, count")
+          .eq("source_id", a)
+          .eq("target_id", b)
+          .eq("rel_type", "toured_with")
+          .single();
+
+        if (existingTour) {
+          await supabase
+            .from("relationships")
+            .update({ count: existingTour.count + 1 })
+            .eq("id", existingTour.id);
+        } else {
+          await supabase.from("relationships").insert({
+            source_id: a,
+            target_id: b,
+            rel_type: "toured_with",
+            count: 1,
+          });
+        }
+      }
+    } catch {
+      // Skip venue if API fails — don't block the whole request
+      continue;
+    }
+
+    // Limit venue lookups to avoid burning too many API requests
+    // Only check up to 3 venues per request
+    break;
   }
 
   // Update crawl_log

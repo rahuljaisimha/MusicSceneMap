@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { searchVenuesForArtists, type VenueResult } from "../api/supabase";
+import { searchVenuesForArtists, searchVenuesByMbid, type VenueResult } from "../api/supabase";
 
 export function DiscoverPage() {
   const [city, setCity] = useState("");
@@ -50,7 +50,7 @@ export function DiscoverPage() {
         return;
       }
 
-      const connectedBands = new Set<string>();
+      const connectedBands: Array<{ name: string; mbid: string }> = [];
       const visited = new Set<string>();
       const queue: string[] = [];
 
@@ -63,8 +63,8 @@ export function DiscoverPage() {
         }
       }
 
-      // BFS until we find 15 groups
-      while (queue.length > 0 && connectedBands.size < 5) {
+      // BFS until we find 5 groups
+      while (queue.length > 0 && connectedBands.length < 5) {
         const nodeId = queue.shift()!;
         const neighbors = getNeighbors(nodeId);
 
@@ -77,25 +77,37 @@ export function DiscoverPage() {
           queue.push(neighbor.id);
 
           if (neighbor.type === "group" && !artists.includes(neighbor.name)) {
-            connectedBands.add(neighbor.name);
-            if (connectedBands.size >= 5) break;
+            connectedBands.push({ name: neighbor.name, mbid: neighbor.id });
+            if (connectedBands.length >= 5) break;
           }
         }
       }
 
-      if (connectedBands.size === 0) return;
+      if (connectedBands.length === 0) return;
 
-      // Phase 2: Fetch venues for connected bands (in batches of 5)
-      const bands = [...connectedBands];
+      // Phase 2: Fetch venues for connected bands by MBID (in batches of 5)
+      const bands = connectedBands;
       const batchSize = 5;
 
       for (let i = 0; i < bands.length; i += batchSize) {
         const batch = bands.slice(i, i + batchSize);
-        const batchResults = await searchVenuesForArtists(batch, cityName);
+        const batchPromises = batch.map((b) =>
+          searchVenuesByMbid(b.mbid, cityName).then((r) => ({ ...r, artistName: b.name }))
+        );
+        const batchSettled = await Promise.allSettled(batchPromises);
+
+        const batchVenues: Array<VenueResult & { artists: string[] }> = [];
+        for (const result of batchSettled) {
+          if (result.status !== "fulfilled") continue;
+          const { venues, artistName } = result.value;
+          for (const v of venues) {
+            batchVenues.push({ ...v, artists: [artistName] });
+          }
+        }
 
         // Merge with existing results
         setResults((prev) => {
-          if (!prev) return batchResults;
+          if (!prev) return batchVenues;
           const merged = new Map<string, (typeof prev)[0]>();
 
           // Add existing
@@ -104,7 +116,7 @@ export function DiscoverPage() {
           }
 
           // Merge new
-          for (const v of batchResults) {
+          for (const v of batchVenues) {
             const existing = merged.get(v.venue);
             if (existing) {
               existing.showCount += v.showCount;

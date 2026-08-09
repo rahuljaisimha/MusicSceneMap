@@ -15,10 +15,25 @@ export interface VenueSearchResponse {
 }
 
 /**
- * Search for venues where an artist has played in a given city.
+ * Search for venues where an artist has played in a given city (by name).
  */
 export async function searchVenues(artist: string, city: string): Promise<VenueSearchResponse> {
   const params = new URLSearchParams({ artist, city });
+  const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/venue-search?${params}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || `Request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Search for venues by MBID (avoids name ambiguity).
+ */
+export async function searchVenuesByMbid(artistMbid: string, city: string): Promise<VenueSearchResponse> {
+  const params = new URLSearchParams({ artistMbid, city });
   const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/venue-search?${params}`);
 
   if (!response.ok) {

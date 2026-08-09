@@ -228,7 +228,7 @@ def main():
             batch.append((data["gid"], data["name"], data["type"], data.get("disambiguation"), None))
             if len(batch) >= BATCH_SIZE:
                 execute_values(cur,
-                    "INSERT INTO artists (mbid, name, type, disambiguation, country) VALUES %s ON CONFLICT DO NOTHING",
+                    "INSERT INTO artists (mbid, name, type, disambiguation, country) VALUES %s ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, disambiguation=EXCLUDED.disambiguation, country=EXCLUDED.country",
                     batch)
                 count += len(batch)
                 batch = []
@@ -237,7 +237,7 @@ def main():
                     conn.commit()
     if batch:
         execute_values(cur,
-            "INSERT INTO artists (mbid, name, type, disambiguation, country) VALUES %s ON CONFLICT DO NOTHING",
+            "INSERT INTO artists (mbid, name, type, disambiguation, country) VALUES %s ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, disambiguation=EXCLUDED.disambiguation, country=EXCLUDED.country",
             batch)
         count += len(batch)
     conn.commit()
@@ -288,7 +288,7 @@ def main():
         batch.append((gid0, gid1, mapped, 1))
         if len(batch) >= BATCH_SIZE:
             execute_values(cur,
-                "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO NOTHING",
+                "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO UPDATE SET count=EXCLUDED.count",
                 batch)
             count += len(batch)
             batch = []
@@ -298,7 +298,7 @@ def main():
 
     if batch:
         execute_values(cur,
-            "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO NOTHING",
+            "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO UPDATE SET count=EXCLUDED.count",
             batch)
         count += len(batch)
     conn.commit()
@@ -416,7 +416,7 @@ def main():
         batch.append((data["gid"], data["name"], primary_mbid, None, None))
         if len(batch) >= BATCH_SIZE:
             execute_values(cur,
-                "INSERT INTO albums (mbid, name, primary_artist_mbid, release_year, type) VALUES %s ON CONFLICT DO NOTHING",
+                "INSERT INTO albums (mbid, name, primary_artist_mbid, release_year, type) VALUES %s ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, primary_artist_mbid=EXCLUDED.primary_artist_mbid, release_year=EXCLUDED.release_year, type=EXCLUDED.type",
                 batch)
             count += len(batch)
             batch = []
@@ -424,7 +424,7 @@ def main():
 
     if batch:
         execute_values(cur,
-            "INSERT INTO albums (mbid, name, primary_artist_mbid, release_year, type) VALUES %s ON CONFLICT DO NOTHING",
+            "INSERT INTO albums (mbid, name, primary_artist_mbid, release_year, type) VALUES %s ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, primary_artist_mbid=EXCLUDED.primary_artist_mbid, release_year=EXCLUDED.release_year, type=EXCLUDED.type",
             batch)
         count += len(batch)
     conn.commit()
@@ -438,7 +438,7 @@ def main():
         batch.append((artist_gid, album_gid, rel_type, track_count))
         if len(batch) >= BATCH_SIZE:
             execute_values(cur,
-                "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO NOTHING",
+                "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO UPDATE SET count=EXCLUDED.count",
                 batch)
             count += len(batch)
             batch = []
@@ -448,7 +448,7 @@ def main():
 
     if batch:
         execute_values(cur,
-            "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO NOTHING",
+            "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s ON CONFLICT (source_id, target_id, rel_type) DO UPDATE SET count=EXCLUDED.count",
             batch)
         count += len(batch)
     conn.commit()

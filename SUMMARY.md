@@ -192,6 +192,7 @@ supabase functions deploy venue-search --project-ref lwqkjtzqjgacgvfjiyxg
 
 ## What's missing / next steps
 
+- **On-demand MusicBrainz refresh**: Edge function that checks if an artist's relationships are stale (e.g. >30 days) when queried, and fetches latest data from MusicBrainz API to update Supabase. Same pattern as venue-search but for band memberships and album credits. Handles new albums/collaborations appearing over time.
 - **Expand seed list to ~300 artists**: More coverage across genres/eras, reduce MAX_HOPS to 4 for tighter graphs.
 - **Genre/decade graph splits**: Separate smaller files per genre for faster downloads and focused game experiences.
 - **Show album collaborators in Explore**: Collapse person→album→person into direct edges so producers/guests are visible.

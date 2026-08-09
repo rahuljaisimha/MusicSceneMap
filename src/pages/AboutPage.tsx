@@ -26,22 +26,34 @@ export function AboutPage() {
           list of valid connections at each step.
         </p>
 
+        <h2 style={styles.heading}>Discover</h2>
+        <p style={styles.paragraph}>
+          Find venues in any city based on artists you like. Enter a city and your favorite
+          artists — the app finds venues where they've performed, then automatically expands to
+          related bands for richer recommendations. Data comes from Setlist.fm and is cached
+          for future queries.
+        </p>
+
         <h2 style={styles.heading}>Data</h2>
         <p style={styles.paragraph}>
           Powered by a precomputed graph database built from{" "}
           <a href="https://musicbrainz.org" target="_blank" rel="noreferrer" style={styles.link}>
             MusicBrainz
           </a>{" "}
-          data dumps. MusicBrainz is an open music encyclopedia with artist relationships,
-          band members, recording credits, and more — all under{" "}
+          data dumps (artist relationships, band members, recording credits) and live data from{" "}
+          <a href="https://www.setlist.fm" target="_blank" rel="noreferrer" style={styles.link}>
+            Setlist.fm
+          </a>{" "}
+          (venues, concert history). MusicBrainz data is under{" "}
           <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noreferrer" style={styles.link}>
             CC0
           </a>{" "}
           (public domain).
         </p>
         <p style={styles.paragraph}>
-          The database is loaded directly in your browser via WebAssembly (sql.js) — no backend
-          server required. First visit downloads ~60MB (cached after that).
+          Explore and Play use a SQLite database loaded in your browser via WebAssembly (~60MB,
+          cached after first visit). Discover queries a backend database that fetches and caches
+          venue data on demand.
         </p>
 
         <h2 style={styles.heading}>Source Code</h2>

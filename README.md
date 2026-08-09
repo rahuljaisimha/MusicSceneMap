@@ -41,6 +41,10 @@ Search for any artist or band and visualize their network — band members, side
 
 A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships and supporting roles. Navigate by selecting from valid connections at each step. The app computes the shortest path and shows you a "par" to beat.
 
+## Discover
+
+Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related bands for richer recommendations. Powered by Setlist.fm data, cached in a backend database.
+
 ## Running
 
 ```bash

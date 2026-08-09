@@ -33,12 +33,96 @@ export function DiscoverPage() {
     setLoading(true);
     setError(null);
     setResults(null);
+
+    const cityName = city.trim();
+
     try {
-      const venues = await searchVenuesForArtists(artists, city.trim());
-      setResults(venues);
+      // Phase 1: Search for the artists the user typed (immediate results)
+      const directResults = await searchVenuesForArtists(artists, cityName);
+      setResults(directResults);
+      setLoading(false);
+
+      // Phase 2: Find connected bands via BFS in SQLite (no hop limit, cap at 15 groups)
+      const { getDb, findNodeByName, getNeighbors } = await import("../db/graphDb");
+      try {
+        await getDb();
+      } catch {
+        return;
+      }
+
+      const connectedBands = new Set<string>();
+      const visited = new Set<string>();
+      const queue: string[] = [];
+
+      // Start BFS from user's artists
+      for (const artist of artists) {
+        const node = findNodeByName(artist);
+        if (node && !visited.has(node.id)) {
+          visited.add(node.id);
+          queue.push(node.id);
+        }
+      }
+
+      // BFS until we find 15 groups
+      while (queue.length > 0 && connectedBands.size < 5) {
+        const nodeId = queue.shift()!;
+        const neighbors = getNeighbors(nodeId);
+
+        for (const { node: neighbor, relType } of neighbors) {
+          if (visited.has(neighbor.id)) continue;
+          if (neighbor.type === "album") continue;
+          if (relType !== "member_of" && relType !== "former_member_of" && relType !== "support_musician") continue;
+
+          visited.add(neighbor.id);
+          queue.push(neighbor.id);
+
+          if (neighbor.type === "group" && !artists.includes(neighbor.name)) {
+            connectedBands.add(neighbor.name);
+            if (connectedBands.size >= 5) break;
+          }
+        }
+      }
+
+      if (connectedBands.size === 0) return;
+
+      // Phase 2: Fetch venues for connected bands (in batches of 5)
+      const bands = [...connectedBands];
+      const batchSize = 5;
+
+      for (let i = 0; i < bands.length; i += batchSize) {
+        const batch = bands.slice(i, i + batchSize);
+        const batchResults = await searchVenuesForArtists(batch, cityName);
+
+        // Merge with existing results
+        setResults((prev) => {
+          if (!prev) return batchResults;
+          const merged = new Map<string, (typeof prev)[0]>();
+
+          // Add existing
+          for (const v of prev) {
+            merged.set(v.venue, { ...v });
+          }
+
+          // Merge new
+          for (const v of batchResults) {
+            const existing = merged.get(v.venue);
+            if (existing) {
+              existing.showCount += v.showCount;
+              for (const a of v.artists) {
+                if (!existing.artists.includes(a)) {
+                  existing.artists.push(a);
+                }
+              }
+            } else {
+              merged.set(v.venue, { ...v });
+            }
+          }
+
+          return [...merged.values()].sort((a, b) => b.showCount - a.showCount);
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
       setLoading(false);
     }
   };

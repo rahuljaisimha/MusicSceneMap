@@ -46,6 +46,15 @@ Game mode (Six Degrees of Music):
         → Shows endpoints + par (shortest path length)
         → User navigates by selecting from valid connections list
         → Undo support, no revisiting, game persists 24h in localStorage
+
+Discover mode (venue recommendations):
+    User enters city + list of artists
+        → Phase 1: calls Supabase edge function for each artist (immediate results)
+            → Edge function checks cache, falls back to Setlist.fm API
+            → Stores venues + played_at relationships + toured_with
+        → Phase 2: BFS in browser SQLite finds up to 5 connected bands
+            → Fetches their venues in background, merges into results
+        → Venues ranked by total show count across all queried artists
 ```
 
 ## File structure
@@ -66,6 +75,7 @@ src/
 │   ├── ExplorePage.tsx   — Graph exploration via SQLite. Only person/group nodes. Albums filtered out.
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
+│   ├── DiscoverPage.tsx  — Venue recommendations: city + artists → venues. Progressive loading via BFS.
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/
 │   ├── Layout.tsx        — Shared nav bar with Explore/Play/About links.
@@ -75,6 +85,7 @@ src/
 │   ├── Settings.tsx      — API key, Setlist.fm toggle, debug toggle, clear all data.
 │   └── DebugConsole.tsx  — Collapsible log console.
 ├── api/
+│   ├── supabase.ts       — Client for Supabase edge functions (venue search, aggregation).
 │   ├── musicbrainz.ts    — (Legacy) Live MusicBrainz API client. Unused now.
 │   ├── setlistfm.ts      — (Legacy) Live Setlist.fm API client.
 │   └── cache.ts          — (Legacy) localStorage request cache.

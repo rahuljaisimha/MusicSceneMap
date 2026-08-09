@@ -45,6 +45,11 @@ serve(async (req) => {
       if (artist) {
         mbid = artist.mbid;
       } else {
+        // Log the miss for future dataset expansion
+        await supabase.from("search_misses").insert({
+          query: artistName,
+          source: "venue-search",
+        });
         return jsonResponse({ error: `Artist "${artistName}" not found` }, 404);
       }
     }

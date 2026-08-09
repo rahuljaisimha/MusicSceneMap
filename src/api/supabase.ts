@@ -38,7 +38,7 @@ export async function searchVenuesForArtists(
   city: string
 ): Promise<Array<VenueResult & { artists: string[] }>> {
   const results = await Promise.allSettled(
-    artists.map((artist) => searchVenues(artist, city))
+    artists.map((artist) => searchVenues(artist, city).then((r) => ({ ...r, artistName: artist })))
   );
 
   // Aggregate venues across all artists
@@ -46,15 +46,15 @@ export async function searchVenuesForArtists(
 
   for (const result of results) {
     if (result.status !== "fulfilled") continue;
-    const { venues, artist } = result.value;
+    const { venues, artistName } = result.value;
 
     for (const v of venues) {
       const existing = venueMap.get(v.venue);
       if (existing) {
         existing.venue.showCount += v.showCount;
-        existing.artists.push(artist);
+        existing.artists.push(artistName);
       } else {
-        venueMap.set(v.venue, { venue: { ...v }, artists: [artist] });
+        venueMap.set(v.venue, { venue: { ...v }, artists: [artistName] });
       }
     }
   }

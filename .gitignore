@@ -6,6 +6,9 @@ dist
 # MusicBrainz dump processing (large files)
 scripts/data
 
+# Supabase CLI local state
+supabase/.temp
+
 # Generated game graph database (output of process_mb_dump.py)
 public/graph.db
 public/graph.db-shm

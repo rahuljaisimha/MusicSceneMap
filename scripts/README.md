@@ -1,71 +1,42 @@
 # Scripts
 
+Local scripts for data processing and database management.
+
 ## process_mb_dump.py
 
-Downloads and processes the MusicBrainz full data dump into a SQLite database for the Six Degrees game.
-
-### Prerequisites
-
-- Python 3.9+
-- ~10GB free disk space
-- `zstd` command-line tool (for decompression): `brew install zstd`
-
-### Usage
+Downloads MusicBrainz data dump and builds the browser SQLite database (`public/graph.db.gz`).
 
 ```bash
+brew install zstd
 python3 scripts/process_mb_dump.py
 ```
 
-### What it does
+See inline documentation for details.
 
-1. Finds the latest MusicBrainz full export URL
-2. Downloads `mbdump.tar.zst` (~4GB) — skips if already downloaded
-3. Extracts only 4 tables: `artist`, `l_artist_artist`, `link`, `link_type` — skips already-extracted tables
-4. Filters to artists with ≥2 relationships (member_of, supporting_musician)
-5. Outputs `public/graph.db` (SQLite) + `public/graph.db.gz` (compressed for serving)
+## seed_supabase.py
 
-### Output schema
+Seeds the Supabase PostgreSQL database with MusicBrainz data (BFS-filtered from seed artists).
 
-```sql
-CREATE TABLE artists (
-    mbid TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL  -- "person" or "group"
-);
-
-CREATE TABLE edges (
-    source TEXT NOT NULL,
-    target TEXT NOT NULL,
-    rel_type TEXT NOT NULL  -- "member_of" or "support_musician"
-);
-
-CREATE INDEX idx_edges_source ON edges(source);
-CREATE INDEX idx_edges_target ON edges(target);
-CREATE INDEX idx_artists_name ON artists(name COLLATE NOCASE);
+```bash
+pip install psycopg2-binary
+export SUPABASE_DB_URL='postgresql://...'
+python3 scripts/seed_supabase.py
 ```
 
-### Estimated output size
+Requires dump tables to already be extracted (run `process_mb_dump.py` first to download).
 
-- ~50–100K artists with ≥2 relationships
-- ~10–15MB SQLite file (3–5MB gzipped)
+## crawl_setlistfm.py
 
-### Browser usage
+Fetches setlist/venue data from the Setlist.fm API for artists in the database.
+Designed to run periodically (daily), respects API rate limits.
 
-The SQLite file is served from the `public/` directory and queried in the browser using [sql.js](https://github.com/sql-js/sql.js) (SQLite compiled to WASM). Queries are indexed and return in ~1ms.
+```bash
+pip install psycopg2-binary requests
+export SUPABASE_DB_URL='postgresql://...'
+export SETLISTFM_API_KEY='your-key'
+python3 scripts/crawl_setlistfm.py --limit 50 --pages 3
+```
 
-### Re-running
-
-The script is idempotent:
-- If dump tables are already extracted → skips download
-- If tar is downloaded but not decompressed → decompresses only
-- If some tables are missing → extracts only those
-
-Delete `scripts/data/` to force a completely fresh download.
-
-### Adding more relationship types
-
-Edit `RELEVANT_RELATIONSHIP_TYPES` in the script to include additional types like `"producer"`, `"vocal"`, `"instrument"`. This requires also downloading `l_artist_recording` (add to `tables_needed` and write a new parser).
-
-### Data freshness
-
-MusicBrainz publishes new dumps twice a week. Re-run the script to update.
+Options:
+- `--limit N` — max artists to crawl this run (default: 100)
+- `--pages N` — max pages per artist (default: 3)

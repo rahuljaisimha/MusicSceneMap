@@ -87,13 +87,22 @@ src/
 └── index.css             — Dark theme, responsive media queries, highlight animation.
 
 scripts/
-├── process_mb_dump.py    — Downloads MusicBrainz dump, builds SQLite graph.
-│                           Extracts: artist, l_artist_artist, l_artist_recording,
-│                           link, link_type, recording, track, medium, release,
-│                           release_group, artist_credit_name.
-│                           BFS from seed artists, membership deduplication,
-│                           album credits flattened per artist/album.
+├── process_mb_dump.py    — Downloads MusicBrainz dump, builds browser SQLite graph.
+├── seed_supabase.py      — Seeds Supabase Postgres with MusicBrainz data (BFS-filtered).
+├── crawl_setlistfm.py    — Daily crawl job for Setlist.fm venue data.
 └── README.md             — Script documentation.
+
+supabase/
+├── functions/
+│   └── venue-search/     — Edge function: on-demand venue lookup (artist + city → venues).
+│                           Checks cache in Supabase, falls back to Setlist.fm API.
+├── migrations/
+│   └── 001_schema.sql    — PostgreSQL schema (artists, albums, venues, relationships).
+├── config.toml           — Supabase project config.
+└── README.md             — Deployment instructions.
+
+docs/
+└── SPACE_SAVING.md       — Ideas for reducing database storage if needed.
 
 public/
 ├── graph.db.gz           — Precomputed SQLite graph (committed, ~61MB).
@@ -155,10 +164,31 @@ brew install zstd
 python3 scripts/process_mb_dump.py
 ```
 
+## Backend (Supabase)
+
+PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venue data.
+
+**Schema** (`supabase/migrations/001_schema.sql`):
+- `artists` — mbid, name, type, disambiguation, country
+- `albums` — mbid, name, primary_artist_mbid, release_year, type
+- `venues` — id, name, city, state, country
+- `relationships` — source_id, target_id, rel_type, count
+
+**Edge Function** (`supabase/functions/venue-search/`):
+- On-demand venue lookup: frontend sends artist + city
+- Checks Supabase for cached data, falls back to Setlist.fm API
+- Stores results for future queries (data builds up from user interaction)
+
+**Current size**: ~320MB (artists + albums + relationships). ~180MB headroom for venues.
+
 ## Deploying
 
-Push to `main`. GitHub Actions builds and deploys to Pages automatically.
-Requires: repo Settings → Pages → Source → GitHub Actions.
+**Frontend**: Push to `main`. GitHub Actions builds and deploys to Pages automatically.
+
+**Edge Functions**:
+```bash
+supabase functions deploy venue-search --project-ref lwqkjtzqjgacgvfjiyxg
+```
 
 ## What's missing / next steps
 

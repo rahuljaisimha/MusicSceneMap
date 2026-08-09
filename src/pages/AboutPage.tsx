@@ -5,56 +5,50 @@ export function AboutPage() {
         <h1 style={styles.title}>About MusicSceneMap</h1>
         <p style={styles.paragraph}>
           MusicSceneMap is a graph-powered music discovery tool that maps the relationships
-          between artists, musicians, venues, and communities. Instead of recommending music
-          based on genre tags or listening history, it reveals the real-world connections that
-          create music scenes.
+          between artists, musicians, and bands. Instead of recommending music based on genre
+          tags or listening history, it reveals the real-world connections — shared band members,
+          side projects, and collaborations — that create music scenes.
         </p>
 
         <h2 style={styles.heading}>Explore</h2>
         <p style={styles.paragraph}>
-          Search for any artist and watch their network unfold — band members, side projects,
-          collaborators, and supporting musicians. Each node you expand reveals more connections.
-          The graph persists between sessions so you can build up a rich map over time.
+          Search for any artist or band and visualize their network — band members, former members,
+          side projects, and supporting musicians rendered as an interactive force-directed graph.
+          Click any node to see its connections, then expand further. Your graph persists between
+          sessions so you can build up a rich map over time.
         </p>
 
-        <h2 style={styles.heading}>Play</h2>
+        <h2 style={styles.heading}>Six Degrees of Music</h2>
         <p style={styles.paragraph}>
-          A "Six Degrees of Music" game where you connect two musicians through the shortest
-          path of band memberships, collaborations, and shared stages. Coming soon.
+          A game that gives you two musicians (or two bands) and challenges you to find a path
+          connecting them through band memberships and supporting roles. The app computes the
+          shortest possible path and shows you a "par" to beat. Navigate by selecting from the
+          list of valid connections at each step.
         </p>
 
-        <h2 style={styles.heading}>Data Sources</h2>
-        <ul style={styles.list}>
-          <li>
-            <a href="https://musicbrainz.org" target="_blank" rel="noreferrer" style={styles.link}>
-              MusicBrainz
-            </a>{" "}
-            — Artist relationships, band members, labels, and recording credits.
-            Open data under{" "}
-            <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noreferrer" style={styles.link}>
-              CC0
-            </a>.
-          </li>
-          <li>
-            <a href="https://www.setlist.fm" target="_blank" rel="noreferrer" style={styles.link}>
-              Setlist.fm
-            </a>{" "}
-            — Venue data, setlists, and touring history. Used optionally for venue discovery.
-          </li>
-        </ul>
+        <h2 style={styles.heading}>Data</h2>
+        <p style={styles.paragraph}>
+          Powered by a precomputed graph database built from{" "}
+          <a href="https://musicbrainz.org" target="_blank" rel="noreferrer" style={styles.link}>
+            MusicBrainz
+          </a>{" "}
+          data dumps. MusicBrainz is an open music encyclopedia with artist relationships,
+          band members, recording credits, and more — all under{" "}
+          <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noreferrer" style={styles.link}>
+            CC0
+          </a>{" "}
+          (public domain).
+        </p>
+        <p style={styles.paragraph}>
+          The database is loaded directly in your browser via WebAssembly (sql.js) — no backend
+          server required. First visit downloads ~60MB (cached after that).
+        </p>
 
         <h2 style={styles.heading}>Source Code</h2>
         <p style={styles.paragraph}>
           <a href="https://github.com/rahuljaisimha/MusicSceneMap" target="_blank" rel="noreferrer" style={styles.link}>
             github.com/rahuljaisimha/MusicSceneMap
           </a>
-        </p>
-
-        <h2 style={styles.heading}>How it Works</h2>
-        <p style={styles.paragraph}>
-          This is a static site with no backend. All API calls are made directly from your
-          browser. Responses are cached locally for 48 hours to minimize load on upstream
-          services. Your graph and settings are stored in your browser's localStorage.
         </p>
       </div>
     </div>
@@ -91,12 +85,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.9rem",
     lineHeight: 1.6,
     marginBottom: "0.75rem",
-  },
-  list: {
-    color: "#aaa",
-    fontSize: "0.9rem",
-    lineHeight: 1.8,
-    paddingLeft: "1.25rem",
   },
   link: {
     color: "#48dbfb",

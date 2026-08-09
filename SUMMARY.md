@@ -2,14 +2,14 @@
 
 ## What this is
 
-A React app that builds a music scene knowledge graph in the browser using a precomputed SQLite database (from MusicBrainz data dumps). Includes a "Six Degrees of Music" game. Deployable as a static site on GitHub Pages.
+A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages.
 
 ## Tech stack
 
 - Vite + React 18 + TypeScript
 - react-router-dom (HashRouter for GitHub Pages compatibility)
 - react-force-graph-2d for graph visualization
-- sql.js (SQLite compiled to WASM) for querying the graph in-browser
+- sql.js (SQLite compiled to WASM) for in-browser graph queries
 - In-memory SceneGraph with localStorage persistence (Explore view)
 - Python script for processing MusicBrainz data dumps into SQLite
 
@@ -19,25 +19,33 @@ A React app that builds a music scene knowledge graph in the browser using a pre
 Data pipeline (offline, run manually):
     MusicBrainz full dump (~4GB)
         → Python script extracts artists, relationships, recording credits
-        → BFS from ~145 seed artists (6 hops)
+        → BFS from ~145 seed artists (6 hops via member_of/support_musician)
+        → Deduplicates memberships (any active = current, not former)
         → SQLite database: nodes (persons, groups, albums) + edges
-        → Output: public/graph.db (~50-160MB)
+        → Output: public/graph.db.gz (~61MB, committed to repo)
+
+App loading:
+    Browser fetches graph.db.gz
+        → Auto-detects gzip (magic number 1f8b) and decompresses if needed
+        → sql.js opens the SQLite database in WASM
+        → All queries are local, instant (<50ms)
 
 Explore mode:
     User searches artist
         → sql.js queries SQLite for node + neighbors
-        → Filters: only person/group nodes shown (albums hidden)
-        → Relationships shown: member_of, support_musician
+        → Only person/group nodes shown (albums filtered out)
+        → Relationships shown: member_of, former_member_of, support_musician
         → In-memory SceneGraph renders as force-directed graph
+        → Graph persists in localStorage across sessions
 
-Game mode (Six Degrees):
-    On load → fetch graph.db, load into sql.js
-        → Pick two random artists of same type from seed list
-        → BFS shortest path (traverses through albums for richer connections)
-        → Albums with >25 connections skipped (compilation filter)
-        → Show endpoints + par (shortest path length)
-        → User guesses intermediates, reveal shows actual shortest path
-        → Game persists 24h in localStorage
+Game mode (Six Degrees of Music):
+    On load → pick two random artists of same type from seed list
+        → BFS shortest path (restricted to member_of/former_member_of/support_musician)
+        → Albums with >25 connections skipped at runtime (compilation filter)
+        → Re-rolls if distance < 3 hops
+        → Shows endpoints + par (shortest path length)
+        → User navigates by selecting from valid connections list
+        → Undo support, no revisiting, game persists 24h in localStorage
 ```
 
 ## File structure
@@ -45,16 +53,19 @@ Game mode (Six Degrees):
 ```
 src/
 ├── db/
-│   └── graphDb.ts        — sql.js wrapper: load DB, BFS, neighbor queries, search. Runtime compilation filter.
+│   └── graphDb.ts        — sql.js wrapper: load DB, BFS (with rel_type filter), neighbor queries, search.
+│                           Runtime compilation filter (>25 degree albums skipped).
+│                           Auto-detects gzip and decompresses if browser didn't.
 ├── game/
 │   └── artists.ts        — Curated list of ~145 recognizable seed artists (97 persons, 48 groups).
 ├── graph/
 │   ├── types.ts          — Node types, edge types, color maps.
 │   ├── SceneGraph.ts     — In-memory graph with dedup/merge, persistence, expanded tracking.
-│   └── expand.ts         — (Legacy) MusicBrainz API expansion. Unused now that Explore uses SQLite.
+│   └── expand.ts         — (Legacy) MusicBrainz API expansion. Unused now.
 ├── pages/
-│   ├── ExplorePage.tsx   — Graph exploration via SQLite. Only shows person/group nodes.
-│   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, suggestions, par scoring, reveal.
+│   ├── ExplorePage.tsx   — Graph exploration via SQLite. Only person/group nodes. Albums filtered out.
+│   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
+│   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/
 │   ├── Layout.tsx        — Shared nav bar with Explore/Play/About links.
@@ -64,7 +75,7 @@ src/
 │   ├── Settings.tsx      — API key, Setlist.fm toggle, debug toggle, clear all data.
 │   └── DebugConsole.tsx  — Collapsible log console.
 ├── api/
-│   ├── musicbrainz.ts    — (Legacy) Live MusicBrainz API client.
+│   ├── musicbrainz.ts    — (Legacy) Live MusicBrainz API client. Unused now.
 │   ├── setlistfm.ts      — (Legacy) Live Setlist.fm API client.
 │   └── cache.ts          — (Legacy) localStorage request cache.
 ├── debug/
@@ -77,11 +88,16 @@ src/
 
 scripts/
 ├── process_mb_dump.py    — Downloads MusicBrainz dump, builds SQLite graph.
+│                           Extracts: artist, l_artist_artist, l_artist_recording,
+│                           link, link_type, recording, track, medium, release,
+│                           release_group, artist_credit_name.
+│                           BFS from seed artists, membership deduplication,
+│                           album credits flattened per artist/album.
 └── README.md             — Script documentation.
 
 public/
-├── graph.db              — (generated, gitignored) SQLite graph database.
-└── sql-wasm.wasm         — sql.js WASM binary.
+├── graph.db.gz           — Precomputed SQLite graph (committed, ~61MB).
+└── sql-wasm.wasm         — sql.js WASM binary (committed, ~660KB).
 
 .github/workflows/
 └── deploy.yml            — GitHub Actions: build and deploy to GitHub Pages.
@@ -99,26 +115,30 @@ CREATE TABLE nodes (
 CREATE TABLE edges (
     source TEXT NOT NULL,
     target TEXT NOT NULL,
-    rel_type TEXT NOT NULL  -- "member_of", "support_musician", "producer", "vocal",
-                           -- "instrument", "mix", "engineer", "recording", "album_by"
+    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician",
+                           -- "producer", "vocal", "instrument", "mix", "engineer", "recording"
 );
 
--- Indexes on edges(source), edges(target), edges(rel_type), nodes(name), nodes(type)
+-- Indexes: edges(source), edges(target), edges(rel_type), nodes(name COLLATE NOCASE), nodes(type)
 ```
 
 ## Key design decisions
 
-- **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~50MB one-time download, instant queries after.
-- **BFS pathfinding**: Shortest path between any two artists in <50ms on 200K+ nodes.
-- **Compilation filter (runtime)**: Album nodes with >25 connections are skipped during BFS — prevents false shortcuts through tribute albums and compilations.
-- **Explore only shows artists**: Album nodes filtered out of neighbor expansion. Only member_of and support_musician relationships visible.
-- **Game traverses albums**: BFS walks through album nodes to find collaborator connections (person → album → person). Richer paths.
-- **Seed artists**: ~145 recognizable names. BFS at 6 hops from seeds builds the graph. Game picks start/end from this list (same type).
-- **Par scoring**: Par = shortest path length. Game re-rolls if distance < 3 hops.
-- **Vite base**: Production uses `/MusicSceneMap/` for GitHub Pages; dev uses `/` for convenience.
-- **No backend**: Everything runs client-side. Graph data is a static file.
+- **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~61MB download (gzipped), instant queries.
+- **Gzip auto-detection**: Checks first 2 bytes for gzip magic number (1f 8b). Decompresses manually if browser didn't (GitHub Pages). Skips if Vite already decompressed (Content-Encoding: gzip).
+- **Game restricted to band relationships**: BFS and valid moves only use member_of, former_member_of, support_musician. Album credits stored but not used in gameplay (too complex for players).
+- **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS.
+- **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
+- **Explore only shows artists**: Album nodes filtered from search results and neighbor expansion.
+- **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
+- **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
+- **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.
+- **Same-type pairs**: Game always pairs person↔person or group↔group.
+- **Vite base**: `/MusicSceneMap/` in production (GitHub Pages), `/` in dev.
+- **graph.db.gz committed to repo**: 61MB, under GitHub's 100MB limit. Deployed with the site, same origin = no CORS.
+- **No backend**: Everything client-side. Static file hosting only.
 - **Game persistence**: 24h in localStorage. New Game clears and regenerates.
-- **Responsive**: Mobile-friendly layout, bottom sheet InfoPanel, no keyboard popup on node click.
+- **Responsive**: Mobile-friendly, bottom sheet InfoPanel, no keyboard on node click.
 
 ## Running
 
@@ -128,33 +148,31 @@ npm run dev
 # Access at http://localhost:5173/
 ```
 
-## Generating the graph database
+Requires `public/graph.db.gz` — either committed in repo or regenerated:
 
 ```bash
 brew install zstd
 python3 scripts/process_mb_dump.py
-# Downloads ~4GB MusicBrainz dump (cached after first run)
-# Outputs public/graph.db (~50-160MB depending on seed list and hops)
 ```
 
 ## Deploying
 
 Push to `main`. GitHub Actions builds and deploys to Pages automatically.
 Requires: repo Settings → Pages → Source → GitHub Actions.
-Note: `graph.db` is gitignored — must be hosted separately or generated in CI.
 
 ## What's missing / next steps
 
 - **Expand seed list to ~300 artists**: More coverage across genres/eras, reduce MAX_HOPS to 4 for tighter graphs.
 - **Genre/decade graph splits**: Separate smaller files per genre for faster downloads and focused game experiences.
-- **Show album collaborators in Explore**: Collapse person→album→person into direct edges so producers/guests are visible without showing album nodes.
-- **Album→artist edges**: Add `album_by` edges in the script (via `artist_credit_name` table) so contributors can be found from the band directly.
-- **Filter compilations in script**: Remove compilations at build time (release_group.type=11) in addition to runtime filter.
+- **Show album collaborators in Explore**: Collapse person→album→person into direct edges so producers/guests are visible.
+- **Album→artist edges (album_by)**: Add edges linking albums to their primary artist/band (via `artist_credit_name` table). Enables "find contributors to Arctic Monkeys albums" directly.
+- **Filter compilations in script**: Remove compilations at build time (release_group.type=11 or >25 contributors) in addition to runtime filter.
 - **FTS5 search**: Full-text search for fuzzy name matching ("The Arctic Monkeys" → "Arctic Monkeys"). Include artist aliases.
 - **Daily puzzle mode**: Same game for all users each day (date-seeded), shareable results, leaderboard.
+- **Game difficulty levels**: Easy (short paths, famous artists only), Hard (longer paths, obscure connections).
 - **Expand node on click**: Direct expansion from graph without search bar.
 - **Legend on graph canvas**: Color key for node/edge types.
 - **Scene detection**: Graph algorithms to identify communities/scenes automatically.
-- **Travel mode**: Input a city, show relevant venues/scenes filtered by taste (requires Setlist.fm or venue data).
+- **Travel mode**: Input a city, show relevant venues/scenes filtered by taste (requires venue data).
 - **Setlist.fm integration**: Venue data, touring-together inference via shared date+venue.
 - **PostgreSQL backend (future)**: For complex graph queries, venue recommendations, multi-user leaderboards.

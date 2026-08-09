@@ -39,7 +39,7 @@ Search for any artist or band and visualize their network — band members, side
 
 ## Six Degrees of Music (Game)
 
-A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships, supporting roles, and album collaborations. The app computes the shortest path and shows you a "par" to beat.
+A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships and supporting roles. Navigate by selecting from valid connections at each step. The app computes the shortest path and shows you a "par" to beat.
 
 ## Running
 
@@ -48,7 +48,7 @@ npm install
 npm run dev
 ```
 
-The app requires `public/graph.db` (generated from MusicBrainz data):
+The app requires `public/graph.db.gz` (generated from MusicBrainz data, committed to the repo). To regenerate:
 
 ```bash
 brew install zstd

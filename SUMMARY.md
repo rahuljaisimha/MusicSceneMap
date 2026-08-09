@@ -50,10 +50,12 @@ Game mode (Six Degrees of Music):
 Discover mode (venue recommendations):
     User enters city + list of artists
         → Phase 1: calls Supabase edge function for each artist (immediate results)
-            → Edge function checks cache, falls back to Setlist.fm API
+            → Edge function resolves artist (DB → MusicBrainz fallback → adds if new)
+            → Checks cache (14-day stale threshold), falls back to Setlist.fm API
             → Stores venues + played_at relationships + toured_with
         → Phase 2: BFS in browser SQLite finds up to 5 connected bands
-            → Fetches their venues in background, merges into results
+            → Reports artists missing from SQLite via report-miss function
+            → Fetches their venues by MBID in background, merges into results
         → Venues ranked by total show count across all queried artists
 ```
 
@@ -105,10 +107,13 @@ scripts/
 
 supabase/
 ├── functions/
-│   └── venue-search/     — Edge function: on-demand venue lookup (artist + city → venues).
-│                           Checks cache in Supabase, falls back to Setlist.fm API.
+│   ├── venue-search/     — Edge function: on-demand venue lookup (artist + city → venues).
+│   │                       Resolves via DB then MusicBrainz. Caches, detects toured_with.
+│   └── report-miss/      — Edge function: logs artists missing from browser SQLite.
 ├── migrations/
-│   └── 001_schema.sql    — PostgreSQL schema (artists, albums, venues, relationships).
+│   ├── 001_schema.sql    — PostgreSQL schema (artists, albums, venues, relationships).
+│   ├── 002_crawl_log.sql — Data freshness tracking.
+│   └── 003_search_misses.sql — Unknown artist query logging.
 ├── config.toml           — Supabase project config.
 └── README.md             — Deployment instructions.
 
@@ -179,16 +184,22 @@ python3 scripts/process_mb_dump.py
 
 PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venue data.
 
-**Schema** (`supabase/migrations/001_schema.sql`):
+**Schema** (`supabase/migrations/`):
 - `artists` — mbid, name, type, disambiguation, country
 - `albums` — mbid, name, primary_artist_mbid, release_year, type
 - `venues` — id, name, city, state, country
 - `relationships` — source_id, target_id, rel_type, count
+- `crawl_log` — artist_mbid, city, last_fetched (tracks data freshness, 14-day stale threshold)
+- `search_misses` — query, source, created_at (tracks unknown artist lookups)
 
-**Edge Function** (`supabase/functions/venue-search/`):
-- On-demand venue lookup: frontend sends artist + city
-- Checks Supabase for cached data, falls back to Setlist.fm API
-- Stores results for future queries (data builds up from user interaction)
+**Edge Functions** (`supabase/functions/`):
+- `venue-search` — On-demand venue lookup: resolves artist (DB → MusicBrainz fallback), checks cache, fetches Setlist.fm, stores results, detects touring partners. Adds missing artists to DB automatically.
+- `report-miss` — Lightweight POST endpoint for frontend to report artists missing from browser SQLite.
+
+**Search miss tracking**:
+- `sqlite-missing` — in Supabase DB but not browser SQLite (frontend reports via report-miss)
+- `venue-search-missing-artist` — resolved via MusicBrainz, added to Supabase (edge function logs)
+- `venue-search-not-found` — not found anywhere, likely mistype (edge function logs)
 
 **Current size**: ~320MB (artists + albums + relationships). ~180MB headroom for venues.
 

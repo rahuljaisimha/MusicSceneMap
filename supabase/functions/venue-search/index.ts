@@ -35,6 +35,7 @@ serve(async (req) => {
     // Resolve artist MBID
     let mbid = artistMbid;
     if (!mbid && artistName) {
+      // First try our database
       const { data: artist } = await supabase
         .from("artists")
         .select("mbid")
@@ -45,12 +46,49 @@ serve(async (req) => {
       if (artist) {
         mbid = artist.mbid;
       } else {
-        // Log the miss for future dataset expansion
-        await supabase.from("search_misses").insert({
-          query: artistName,
-          source: "venue-search",
-        });
-        return jsonResponse({ error: `Artist "${artistName}" not found` }, 404);
+        // Fallback: resolve via MusicBrainz API
+        const mbResponse = await fetch(
+          `https://musicbrainz.org/ws/2/artist?query=artist:"${encodeURIComponent(artistName)}"&limit=5&fmt=json`,
+          { headers: { "User-Agent": "MusicSceneMap/0.1 (https://github.com/rahuljaisimha/MusicSceneMap)" } }
+        );
+
+        if (mbResponse.ok) {
+          const mbData = await mbResponse.json();
+          const mbArtists = mbData.artists || [];
+          // Prefer exact name match
+          const exactMatch = mbArtists.find(
+            (a: any) => a.name.toLowerCase() === artistName.toLowerCase()
+          );
+          const resolved = exactMatch || mbArtists[0];
+          if (resolved) {
+            mbid = resolved.id;
+
+            // Add the artist to our database (missing from our dataset)
+            const artistType = resolved.type === "Group" ? "group" : "person";
+            await supabase.from("artists").upsert({
+              mbid: resolved.id,
+              name: resolved.name,
+              type: artistType,
+              disambiguation: resolved.disambiguation || null,
+              country: resolved.country || null,
+            }, { onConflict: "mbid" });
+
+            // Log as a missing artist (needs to be added to SQLite later)
+            await supabase.from("search_misses").insert({
+              query: artistName,
+              source: "venue-search-missing-artist",
+            });
+          }
+        }
+
+        if (!mbid) {
+          // Likely a mistype — log it but don't add to artists
+          await supabase.from("search_misses").insert({
+            query: artistName,
+            source: "venue-search-not-found",
+          });
+          return jsonResponse({ error: `Artist "${artistName}" not found` }, 404);
+        }
       }
     }
 

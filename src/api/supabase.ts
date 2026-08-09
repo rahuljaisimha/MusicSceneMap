@@ -1,5 +1,17 @@
 const SUPABASE_FUNCTIONS_URL = "https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1";
 
+/**
+ * Report a search miss (artist not found in SQLite or DB).
+ * Fire-and-forget, doesn't block the user.
+ */
+export function reportMiss(query: string, source: string): void {
+  fetch(`${SUPABASE_FUNCTIONS_URL}/report-miss`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, source }),
+  }).catch(() => {}); // fire and forget
+}
+
 export interface VenueResult {
   venue: string;
   city: string;

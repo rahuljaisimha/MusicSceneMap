@@ -44,10 +44,19 @@ export function DiscoverPage() {
 
       // Phase 2: Find connected bands via BFS in SQLite (no hop limit, cap at 15 groups)
       const { getDb, findNodeByName, getNeighbors } = await import("../db/graphDb");
+      const { reportMiss } = await import("../api/supabase");
       try {
         await getDb();
       } catch {
         return;
+      }
+
+      // Report artists missing from SQLite (for future SQLite updates)
+      for (const artist of artists) {
+        const node = findNodeByName(artist);
+        if (!node) {
+          reportMiss(artist, "sqlite-missing");
+        }
       }
 
       const connectedBands: Array<{ name: string; mbid: string }> = [];

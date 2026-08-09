@@ -50,8 +50,8 @@ supabase login
 # Set the API key secret
 supabase secrets set SETLISTFM_API_KEY=hF7i_y1dRFcZVU95gt6YIe5VVQgBrDG6m8J1 --project-ref lwqkjtzqjgacgvfjiyxg
 
-# Deploy
-supabase functions deploy venue-search --project-ref lwqkjtzqjgacgvfjiyxg
+# Deploy (--no-verify-jwt makes it publicly callable without auth)
+supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
 
 ### How it works

@@ -14,11 +14,10 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-// Cache duration: don't re-fetch from Setlist.fm if data is less than 7 days old
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Stale after 14 days — return cache but refresh in background
+const STALE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
   }
@@ -30,13 +29,10 @@ serve(async (req) => {
     const city = url.searchParams.get("city");
 
     if (!city) {
-      return new Response(
-        JSON.stringify({ error: "Missing 'city' parameter" }),
-        { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-      );
+      return jsonResponse({ error: "Missing 'city' parameter" }, 400);
     }
 
-    // Resolve artist MBID from name if needed
+    // Resolve artist MBID
     let mbid = artistMbid;
     if (!mbid && artistName) {
       const { data: artist } = await supabase
@@ -49,148 +45,173 @@ serve(async (req) => {
       if (artist) {
         mbid = artist.mbid;
       } else {
-        return new Response(
-          JSON.stringify({ error: `Artist "${artistName}" not found` }),
-          { status: 404, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
+        return jsonResponse({ error: `Artist "${artistName}" not found` }, 404);
       }
     }
 
     if (!mbid) {
-      return new Response(
-        JSON.stringify({ error: "Provide 'artistMbid' or 'artist' parameter" }),
-        { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-      );
+      return jsonResponse({ error: "Provide 'artistMbid' or 'artist' parameter" }, 400);
     }
 
-    // Check cache: do we already have venue data for this artist in this city?
-    const { data: cachedVenues } = await supabase
-      .from("relationships")
-      .select(`
-        target_id,
-        count,
-        venues!inner(id, name, city, state, country)
-      `)
-      .eq("source_id", mbid)
-      .eq("rel_type", "played_at")
-      .eq("venues.city", city);
+    // Check crawl_log for freshness
+    const { data: crawlEntry } = await supabase
+      .from("crawl_log")
+      .select("last_fetched")
+      .eq("artist_mbid", mbid)
+      .eq("city", city)
+      .single();
 
-    // If we have cached data, return it
-    // TODO: Add a crawl_log table to track when we last fetched for staleness checks
-    if (cachedVenues && cachedVenues.length > 0) {
-      const results = cachedVenues.map((r: any) => ({
-        venue: r.venues.name,
-        city: r.venues.city,
-        country: r.venues.country,
-        showCount: r.count,
-      }));
-      results.sort((a: any, b: any) => b.showCount - a.showCount);
+    const hasCachedData = !!crawlEntry;
+    const isStale = hasCachedData &&
+      (Date.now() - new Date(crawlEntry.last_fetched).getTime()) > STALE_AFTER_MS;
 
-      return new Response(
-        JSON.stringify({ source: "cache", artist: mbid, city, venues: results }),
-        { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-      );
-    }
+    // If we have cached data, return it immediately
+    if (hasCachedData) {
+      const venues = await getCachedVenues(mbid, city);
 
-    // Cache miss — fetch from Setlist.fm API
-    const setlistResponse = await fetch(
-      `${SETLISTFM_BASE}/search/setlists?artistMbid=${mbid}&cityName=${encodeURIComponent(city)}&p=1`,
-      {
-        headers: {
-          Accept: "application/json",
-          "x-api-key": SETLISTFM_API_KEY,
-        },
+      // If stale, trigger background refresh (non-blocking)
+      if (isStale) {
+        // EdgeRuntime.waitUntil not available in all envs, so use fire-and-forget
+        fetchAndStore(mbid, city).catch(() => {});
       }
-    );
 
-    if (!setlistResponse.ok) {
-      const status = setlistResponse.status;
-      if (status === 404) {
-        return new Response(
-          JSON.stringify({ source: "api", artist: mbid, city, venues: [] }),
-          { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
-      }
-      return new Response(
-        JSON.stringify({ error: `Setlist.fm API error: ${status}` }),
-        { status: 502, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-      );
+      return jsonResponse({
+        source: "cache",
+        stale: isStale,
+        artist: mbid,
+        city,
+        venues,
+      });
     }
 
-    const setlistData = await setlistResponse.json();
-    const setlists = setlistData.setlist || [];
-
-    // Aggregate venues with play counts
-    const venueMap = new Map<string, { venue: any; count: number }>();
-
-    for (const setlist of setlists) {
-      const venue = setlist.venue;
-      if (!venue) continue;
-
-      const existing = venueMap.get(venue.id);
-      if (existing) {
-        existing.count++;
-      } else {
-        venueMap.set(venue.id, { venue, count: 1 });
-      }
-    }
-
-    // Store venues and relationships in Supabase
-    for (const [venueId, { venue, count }] of venueMap) {
-      const venueCity = venue.city || {};
-
-      // Upsert venue
-      await supabase.from("venues").upsert({
-        id: venueId,
-        name: venue.name,
-        city: venueCity.name || null,
-        state: venueCity.state || null,
-        country: venueCity.country?.name || null,
-      }, { onConflict: "id" });
-
-      // Upsert played_at relationship
-      const { data: existing } = await supabase
-        .from("relationships")
-        .select("id, count")
-        .eq("source_id", mbid)
-        .eq("target_id", venueId)
-        .eq("rel_type", "played_at")
-        .single();
-
-      if (existing) {
-        await supabase
-          .from("relationships")
-          .update({ count: Math.max(existing.count, count) })
-          .eq("id", existing.id);
-      } else {
-        await supabase.from("relationships").insert({
-          source_id: mbid,
-          target_id: venueId,
-          rel_type: "played_at",
-          count,
-        });
-      }
-    }
-
-    // Return results
-    const results = [...venueMap.values()]
-      .map(({ venue, count }) => ({
-        venue: venue.name,
-        city: venue.city?.name || city,
-        country: venue.city?.country?.name || null,
-        showCount: count,
-      }))
-      .sort((a, b) => b.showCount - a.showCount);
-
-    return new Response(
-      JSON.stringify({ source: "api", artist: mbid, city, venues: results }),
-      { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-    );
+    // No cache — fetch from API, store, and return
+    const venues = await fetchAndStore(mbid, city);
+    return jsonResponse({ source: "api", stale: false, artist: mbid, city, venues });
 
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err.message }),
-      { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-    );
+    return jsonResponse({ error: (err as Error).message }, 500);
   }
 });
+
+// --- Helpers ---
+
+function jsonResponse(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
+
+async function getCachedVenues(mbid: string, city: string) {
+  // Get played_at relationships for this artist, join with venues in the city
+  const { data } = await supabase
+    .from("relationships")
+    .select("target_id, count")
+    .eq("source_id", mbid)
+    .eq("rel_type", "played_at");
+
+  if (!data || data.length === 0) return [];
+
+  const venueIds = data.map((r: any) => r.target_id);
+  const { data: venues } = await supabase
+    .from("venues")
+    .select("id, name, city, country")
+    .in("id", venueIds)
+    .ilike("city", city);
+
+  if (!venues) return [];
+
+  // Merge counts
+  const countMap = new Map(data.map((r: any) => [r.target_id, r.count]));
+  return venues
+    .map((v: any) => ({
+      venue: v.name,
+      city: v.city,
+      country: v.country,
+      showCount: countMap.get(v.id) || 0,
+    }))
+    .sort((a: any, b: any) => b.showCount - a.showCount);
+}
+
+async function fetchAndStore(mbid: string, city: string) {
+  // Fetch from Setlist.fm
+  const response = await fetch(
+    `${SETLISTFM_BASE}/search/setlists?artistMbid=${mbid}&cityName=${encodeURIComponent(city)}&p=1`,
+    { headers: { Accept: "application/json", "x-api-key": SETLISTFM_API_KEY } }
+  );
+
+  if (!response.ok) {
+    if (response.status === 404) return [];
+    throw new Error(`Setlist.fm API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const setlists = data.setlist || [];
+
+  // Aggregate venues
+  const venueMap = new Map<string, { venue: any; count: number }>();
+  for (const setlist of setlists) {
+    const venue = setlist.venue;
+    if (!venue) continue;
+    const existing = venueMap.get(venue.id);
+    if (existing) {
+      existing.count++;
+    } else {
+      venueMap.set(venue.id, { venue, count: 1 });
+    }
+  }
+
+  // Store venues and relationships
+  for (const [venueId, { venue, count }] of venueMap) {
+    const venueCity = venue.city || {};
+
+    // Upsert venue
+    await supabase.from("venues").upsert({
+      id: venueId,
+      name: venue.name,
+      city: venueCity.name || null,
+      state: venueCity.state || null,
+      country: venueCity.country?.name || null,
+    }, { onConflict: "id" });
+
+    // Upsert played_at relationship
+    const { data: existing } = await supabase
+      .from("relationships")
+      .select("id, count")
+      .eq("source_id", mbid)
+      .eq("target_id", venueId)
+      .eq("rel_type", "played_at")
+      .single();
+
+    if (existing) {
+      await supabase
+        .from("relationships")
+        .update({ count: Math.max(existing.count, count) })
+        .eq("id", existing.id);
+    } else {
+      await supabase.from("relationships").insert({
+        source_id: mbid,
+        target_id: venueId,
+        rel_type: "played_at",
+        count,
+      });
+    }
+  }
+
+  // Update crawl_log
+  await supabase.from("crawl_log").upsert({
+    artist_mbid: mbid,
+    city,
+    last_fetched: new Date().toISOString(),
+  }, { onConflict: "artist_mbid,city" });
+
+  // Return results
+  return [...venueMap.values()]
+    .map(({ venue, count }) => ({
+      venue: venue.name,
+      city: venue.city?.name || city,
+      country: venue.city?.country?.name || null,
+      showCount: count,
+    }))
+    .sort((a, b) => b.showCount - a.showCount);
+}

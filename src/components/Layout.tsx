@@ -12,6 +12,9 @@ export function Layout() {
           <NavLink to="/play" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
             Play
           </NavLink>
+          <NavLink to="/discover" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
+            Discover
+          </NavLink>
           <NavLink to="/about" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
             About
           </NavLink>

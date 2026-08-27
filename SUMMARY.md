@@ -12,6 +12,7 @@ A React app that visualizes music scene connections and includes a "Six Degrees 
 - sql.js (SQLite compiled to WASM) for in-browser graph queries
 - In-memory SceneGraph with localStorage persistence (Explore view)
 - Python script for processing MusicBrainz data dumps into SQLite
+- Vitest for testing (offline, fixture-based)
 
 ## Architecture
 
@@ -93,6 +94,10 @@ src/
 │   └── cache.ts          — (Legacy) localStorage request cache.
 ├── debug/
 │   └── DebugLog.ts       — Singleton log store.
+├── test/
+│   ├── setup.ts          — Vitest setup (localStorage shim for Node env).
+│   ├── musicbrainz.integration.test.ts — Regression tests for recurring MB bugs (stubbed fetch).
+│   └── fixtures/         — Captured MusicBrainz API responses (search-fuzz, artist-arctic-monkeys, etc.).
 ├── App.tsx               — Router (HashRouter, 3 routes).
 ├── main.tsx              — Entry point.
 ├── vite-env.d.ts         — Vite type declarations.
@@ -179,6 +184,22 @@ Requires `public/graph.db.gz` — either committed in repo or regenerated:
 brew install zstd
 python3 scripts/process_mb_dump.py
 ```
+
+## Testing
+
+```bash
+npm test          # run once
+npm run test:watch  # watch mode
+```
+
+Vitest tests in `src/test/musicbrainz.integration.test.ts` are regression guards for bugs that recurred during development. They use real MusicBrainz API responses captured as fixtures (`src/test/fixtures/`) with `fetch` stubbed — offline, deterministic, fast (~140ms). Covered cases:
+- Exact name match vs relevance ranking (Fuzz vs Buzz Fuzz)
+- Same-name disambiguation (multiple "Jack White")
+- Current vs former member dedup (member current if any relationship not ended)
+- Bands dedup (Nirvana appears twice in Dave Grohl's raw relations)
+- Supporting musician extraction (Arctic Monkeys → Tom Rowley, Tyler Parkford)
+
+The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To refresh a fixture, re-capture the MusicBrainz API response for the relevant MBID.
 
 ## Backend (Supabase)
 

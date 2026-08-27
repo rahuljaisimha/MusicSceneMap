@@ -6,6 +6,7 @@ import {
   extractLabels,
   extractSupportMusicians,
   extractSupportedBands,
+  pickBestMatch,
 } from "../api/musicbrainz";
 import {
   getSetlistsForArtist,
@@ -32,10 +33,7 @@ export async function expandArtist(artistName: string, graph: SceneGraph): Promi
   }
 
   // Prefer an exact name match over MusicBrainz's relevance ranking
-  const exactMatch = searchResults.find(
-    (a) => a.name.toLowerCase() === artistName.toLowerCase()
-  );
-  const topResult = exactMatch ?? searchResults[0]!;
+  const topResult = pickBestMatch(artistName, searchResults)!;
   const mbid = topResult.id;
 
   // 2. Get full artist with relations

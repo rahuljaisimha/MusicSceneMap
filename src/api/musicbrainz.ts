@@ -14,13 +14,16 @@ import { cachedFetch } from "./cache";
 let lastRequestTime = 0;
 
 async function mbFetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-  // Respect 1 req/sec rate limit
-  const now = Date.now();
-  const elapsed = now - lastRequestTime;
-  if (elapsed < 1100) {
-    await new Promise((r) => setTimeout(r, 1100 - elapsed));
+  // Respect 1 req/sec rate limit (skipped in tests, where fetch is stubbed)
+  const isTest = typeof process !== "undefined" && process.env?.VITEST;
+  if (!isTest) {
+    const now = Date.now();
+    const elapsed = now - lastRequestTime;
+    if (elapsed < 1100) {
+      await new Promise((r) => setTimeout(r, 1100 - elapsed));
+    }
+    lastRequestTime = Date.now();
   }
-  lastRequestTime = Date.now();
 
   const url = new URL(`${BASE_URL}${path}`);
   url.searchParams.set("fmt", "json");
@@ -83,6 +86,19 @@ export async function searchArtists(query: string, limit = 10): Promise<MBArtist
     debugLog.log(`MusicBrainz returned ${result.artists.length} results for "${query}"`);
     return result.artists;
   });
+}
+
+/**
+ * Pick the best match from search results, preferring an exact (case-insensitive)
+ * name match over MusicBrainz's relevance ranking.
+ *
+ * This prevents cases like searching "Fuzz" returning "Buzz Fuzz" (which
+ * MusicBrainz ranks higher) instead of the actual band named "Fuzz".
+ */
+export function pickBestMatch(query: string, results: MBArtist[]): MBArtist | null {
+  if (results.length === 0) return null;
+  const exact = results.find((a) => a.name.toLowerCase() === query.toLowerCase());
+  return exact ?? results[0]!;
 }
 
 /**

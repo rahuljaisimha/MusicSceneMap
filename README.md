@@ -59,6 +59,17 @@ brew install zstd
 python3 scripts/process_mb_dump.py
 ```
 
+## Testing
+
+Unit tests run with [Vitest](https://vitest.dev/):
+
+```bash
+npm test          # run all tests once
+npm run test:watch  # re-run on file changes
+```
+
+The tests are integration-style checks against real MusicBrainz API responses (captured as fixtures in `src/test/fixtures/`, with `fetch` stubbed so tests are offline and deterministic). They lock in specific edge cases that caused repeated bugs — e.g. searching "Fuzz" returning "Buzz Fuzz", multiple artists named "Jack White", and current-vs-former band member deduplication. To refresh a fixture, re-capture the response from the MusicBrainz API for the relevant MBID.
+
 ---
 
 # Motivation

@@ -227,5 +227,12 @@ supabase functions deploy venue-search --project-ref lwqkjtzqjgacgvfjiyxg
 - **Legend on graph canvas**: Color key for node/edge types.
 - **Scene detection**: Graph algorithms to identify communities/scenes automatically.
 - **Travel mode**: Input a city, show relevant venues/scenes filtered by taste (requires venue data).
+- **Upcoming shows / Concert Finder (blocked — no good data source)**: Explored adding a "Discover Shows" mode that recommends upcoming concerts at discovered venues within a date range. Findings:
+  - **Setlist.fm API** — only has *past* setlists, no upcoming shows. Website has upcoming shows on venue pages (`upcomingSetlistsList`) and they scrape cleanly, but listings are sparse.
+  - **Songkick** — has more complete upcoming show data, but the website blocks scraping (HTTP 406, aggressive bot protection) and the official API requires a paid commercial partnership (no free/hobbyist tier).
+  - **JamBase** — excellent fit (MBID-keyed via `/v3/artists/id/musicbrainz:{mbid}`, aggregates 25+ ticketing sources, structured data), but only a 14-day free trial then paid.
+  - **Ticketmaster Discovery API** — free, but only lists LiveNation/Ticketmaster events (limited coverage).
+  - **Songkick API** with MBID support (`/artists/mbid:{mbid}/calendar`) would be ideal but is paid-only.
+  - **Decision**: Parked for now. Revisit if a free MBID-compatible events source appears, or if paying for JamBase/Songkick becomes worthwhile.
 - **Setlist.fm integration**: Venue data, touring-together inference via shared date+venue.
 - **PostgreSQL backend (future)**: For complex graph queries, venue recommendations, multi-user leaderboards.

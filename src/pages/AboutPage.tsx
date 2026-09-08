@@ -25,6 +25,11 @@ export function AboutPage() {
           shortest possible path and shows you a "par" to beat. Navigate by selecting from the
           list of valid connections at each step.
         </p>
+        <p style={styles.paragraph}>
+          You can start a random game, or create a custom game between any two connected artists
+          or bands (they don't have to be the same type). Every game has a shareable link —
+          hit Share to copy a URL that drops a friend into the exact same puzzle.
+        </p>
 
         <h2 style={styles.heading}>Discover</h2>
         <p style={styles.paragraph}>

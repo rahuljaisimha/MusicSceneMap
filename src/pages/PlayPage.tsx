@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { GAME_ARTISTS, type GameArtist } from "../game/artists";
 import { getDb, findNodeByName, bfsShortestPath, findNodeById, getNeighbors } from "../db/graphDb";
 import { DebugConsole } from "../components/DebugConsole";
@@ -127,6 +128,77 @@ async function generateGame(): Promise<StoredGame | null> {
 
   return null;
 }
+/**
+ * Build a game from two resolved nodes. Validates path existence.
+ * Note: start and end do NOT need to be the same type (a person can be
+ * connected to a band). Same-type matching is only enforced for the
+ * auto-generated random games.
+ */
+function buildGameFromNodes(
+  startNode: { id: string; name: string; type: string },
+  endNode: { id: string; name: string; type: string }
+): { game: StoredGame } | { error: string } {
+  if (startNode.id === endNode.id) {
+    return { error: "Start and end must be different." };
+  }
+
+  const path = bfsShortestPath(startNode.id, endNode.id, 12, GAME_REL_TYPES);
+  if (!path) {
+    return { error: `No path exists between "${startNode.name}" and "${endNode.name}".` };
+  }
+
+  const startType: GameArtist["type"] = startNode.type === "group" ? "group" : "person";
+  const endType: GameArtist["type"] = endNode.type === "group" ? "group" : "person";
+  const game: StoredGame = {
+    startArtist: { name: startNode.name, type: startType },
+    endArtist: { name: endNode.name, type: endType },
+    startId: startNode.id,
+    endId: endNode.id,
+    shortestPath: path,
+    par: path.length,
+    guesses: [],
+    revealed: false,
+    timestamp: Date.now(),
+  };
+  saveGame(game);
+  return { game };
+}
+
+/**
+ * Generate a game from user-provided start and end artist names.
+ */
+async function generateCustomGame(
+  startName: string,
+  endName: string
+): Promise<{ game: StoredGame } | { error: string }> {
+  await getDb();
+
+  const startNode = findNodeByName(startName);
+  if (!startNode) return { error: `"${startName}" was not found.` };
+
+  const endNode = findNodeByName(endName);
+  if (!endNode) return { error: `"${endName}" was not found.` };
+
+  return buildGameFromNodes(startNode, endNode);
+}
+
+/**
+ * Generate a game from start and end MBIDs (used for sharing — precise, no name ambiguity).
+ */
+async function generateGameFromIds(
+  startId: string,
+  endId: string
+): Promise<{ game: StoredGame } | { error: string }> {
+  await getDb();
+
+  const startNode = findNodeById(startId);
+  if (!startNode) return { error: `Start artist not found (${startId}).` };
+
+  const endNode = findNodeById(endId);
+  if (!endNode) return { error: `End artist not found (${endId}).` };
+
+  return buildGameFromNodes(startNode, endNode);
+}
 
 function relTypePriority(relType: string): number {
   switch (relType) {
@@ -161,8 +233,15 @@ function formatRelType(relType: string, nodeType: string): string {
 }
 
 export function PlayPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [state, setState] = useState<GameState>({ status: "loading", guesses: [], revealed: false });
   const [input, setInput] = useState("");
+  const [showCustom, setShowCustom] = useState(false);
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [customError, setCustomError] = useState<string | null>(null);
+  const [customLoading, setCustomLoading] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   // Compute current node: last guess resolved to ID, or start node
   const currentNodeId = (() => {
@@ -212,6 +291,7 @@ export function PlayPage() {
     setState({ status: "loading", guesses: [], revealed: false });
     const game = await generateGame();
     if (game) {
+      setSearchParams({ start: game.startId, end: game.endId }, { replace: true });
       setState({
         status: "playing",
         startArtist: game.startArtist,
@@ -226,7 +306,64 @@ export function PlayPage() {
     } else {
       setState({ status: "error", error: "Could not generate a game. Is graph.db loaded?", guesses: [], revealed: false });
     }
-  }, []);
+  }, [setSearchParams]);
+
+  const handleStartCustomGame = useCallback(async () => {
+    const start = customStart.trim();
+    const end = customEnd.trim();
+    if (!start || !end) {
+      setCustomError("Enter both a start and an end.");
+      return;
+    }
+    setCustomLoading(true);
+    setCustomError(null);
+    clearGame();
+    const result = await generateCustomGame(start, end);
+    setCustomLoading(false);
+    if ("error" in result) {
+      setCustomError(result.error);
+      return;
+    }
+    const { game } = result;
+    setShowCustom(false);
+    setCustomStart("");
+    setCustomEnd("");
+    setInput("");
+    setSearchParams({ start: game.startId, end: game.endId }, { replace: true });
+    setState({
+      status: "playing",
+      startArtist: game.startArtist,
+      endArtist: game.endArtist,
+      startId: game.startId,
+      endId: game.endId,
+      shortestPath: game.shortestPath,
+      par: game.par,
+      guesses: game.guesses,
+      revealed: game.revealed,
+    });
+  }, [customStart, customEnd, setSearchParams]);
+
+  const handleShare = useCallback(() => {
+    if (state.status !== "playing") return;
+    const url = new URL(window.location.href);
+    const params = new URLSearchParams({
+      start: state.startId!,
+      end: state.endId!,
+    });
+    url.hash = `#/play?${params.toString()}`;
+    const shareUrl = url.toString();
+
+    const done = () => {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    };
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(shareUrl).then(done).catch(done);
+    } else {
+      done();
+    }
+  }, [state]);
 
   // Load saved game or generate new one
   useEffect(() => {
@@ -237,6 +374,33 @@ export function PlayPage() {
         setState({ status: "error", error: e instanceof Error ? e.message : "Failed to load database", guesses: [], revealed: false });
         return;
       }
+
+      // 1. Shared game via URL params (?start=<mbid>&end=<mbid>) takes priority
+      const sharedStart = searchParams.get("start");
+      const sharedEnd = searchParams.get("end");
+      if (sharedStart && sharedEnd) {
+        clearGame();
+        const result = await generateGameFromIds(sharedStart, sharedEnd);
+        if ("game" in result) {
+          const { game } = result;
+          setState({
+            status: "playing",
+            startArtist: game.startArtist,
+            endArtist: game.endArtist,
+            startId: game.startId,
+            endId: game.endId,
+            shortestPath: game.shortestPath,
+            par: game.par,
+            guesses: game.guesses,
+            revealed: game.revealed,
+          });
+          return;
+        }
+        // If the shared game is invalid, fall through to a random game
+        debugLog.log(`Shared game invalid: ${result.error}`);
+      }
+
+      // 2. Resume a saved game
       const saved = loadGame();
       if (saved) {
         setState({
@@ -251,6 +415,7 @@ export function PlayPage() {
           revealed: saved.revealed,
         });
       } else {
+        // 3. Generate a random game
         const game = await generateGame();
         if (game) {
           setState({
@@ -458,9 +623,49 @@ export function PlayPage() {
               </div>
             )}
 
-            <button onClick={startNewGame} style={styles.newGameBtn}>
-              New Game
-            </button>
+            <div style={styles.gameButtons}>
+              <button onClick={startNewGame} style={styles.newGameBtn}>
+                New Game
+              </button>
+              <button onClick={() => { setShowCustom((s) => !s); setCustomError(null); }} style={styles.customBtn}>
+                Custom Game
+              </button>
+              <button onClick={handleShare} style={styles.shareBtn}>
+                {shareCopied ? "Copied!" : "Share"}
+              </button>
+            </div>
+
+            {showCustom && (
+              <div style={styles.customForm}>
+                <p style={styles.customHint}>
+                  Pick your own start and end — any two artists or bands that are connected.
+                </p>
+                <input
+                  type="text"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  placeholder="Start artist or band"
+                  style={styles.input}
+                  aria-label="Start artist"
+                />
+                <input
+                  type="text"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  placeholder="End artist or band"
+                  style={styles.input}
+                  aria-label="End artist"
+                />
+                {customError && <p style={styles.customError}>{customError}</p>}
+                <button
+                  onClick={handleStartCustomGame}
+                  disabled={customLoading || !customStart.trim() || !customEnd.trim()}
+                  style={styles.newGameBtn}
+                >
+                  {customLoading ? "Checking…" : "Start"}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -511,4 +716,10 @@ const styles: Record<string, React.CSSProperties> = {
   bandChip: { padding: "0.3rem 0.7rem", borderRadius: "12px", fontSize: "0.85rem", background: "rgba(255, 107, 107, 0.15)", color: "#ff6b6b", border: "1px solid #ff6b6b" },
   albumChip: { padding: "0.3rem 0.7rem", borderRadius: "12px", fontSize: "0.85rem", background: "rgba(85, 239, 196, 0.15)", color: "#55efc4", border: "1px solid #55efc4" },
   newGameBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "none", background: "#ff6b6b", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem", marginTop: "0.5rem" },
+  gameButtons: { display: "flex", gap: "0.5rem", marginTop: "0.5rem" },
+  customBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "1px solid #48dbfb", background: "transparent", color: "#48dbfb", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem", marginTop: "0.5rem" },
+  shareBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "1px solid #55efc4", background: "transparent", color: "#55efc4", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem", marginTop: "0.5rem" },
+  customForm: { display: "flex", flexDirection: "column", gap: "0.5rem", width: "100%", maxWidth: "400px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "1rem" },
+  customHint: { color: "#888", fontSize: "0.8rem", marginBottom: "0.25rem" },
+  customError: { color: "#ff6b6b", fontSize: "0.8rem" },
 };

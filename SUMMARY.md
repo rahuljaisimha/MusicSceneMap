@@ -47,6 +47,9 @@ Game mode (Six Degrees of Music):
         → Shows endpoints + par (shortest path length)
         → User navigates by selecting from valid connections list
         → Undo support, no revisiting, game persists 24h in localStorage
+    Custom game → user picks any two connected artists/bands (no same-type requirement)
+    Shared game → URL params (?start=<mbid>&end=<mbid>) load the exact same puzzle;
+                  Share button copies an MBID-based link (avoids name ambiguity)
 
 Discover mode (venue recommendations):
     User enters city + list of artists
@@ -78,6 +81,7 @@ src/
 │   ├── ExplorePage.tsx   — Graph exploration via SQLite. Only person/group nodes. Albums filtered out.
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
+│   │                       Supports random, custom (any two connected nodes), and shared (MBID URL) games.
 │   ├── DiscoverPage.tsx  — Venue recommendations: city + artists → venues. Progressive loading via BFS.
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/

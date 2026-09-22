@@ -1,11 +1,12 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { SearchBar } from "../components/SearchBar";
 import { GraphView } from "../components/GraphView";
 import { InfoPanel } from "../components/InfoPanel";
 import { DebugConsole } from "../components/DebugConsole";
 import { SceneGraph } from "../graph/SceneGraph";
-import { getDb, findNodeByName, getNeighbors, searchNodes, isDbLoaded } from "../db/graphDb";
+import { getDb, findNodeByName, findNodeById, getNeighbors, searchNodes, isDbLoaded } from "../db/graphDb";
 import { debugLog } from "../debug/DebugLog";
+import { resolveSearchTarget } from "./searchResolution";
 import type { GraphNode, NodeType, EdgeType } from "../graph/types";
 
 /** Map SQLite node types to our graph node types */
@@ -48,6 +49,16 @@ function expandFromDb(name: string, graph: SceneGraph): boolean {
     return expandNodeById(results[0]!.id, results[0]!.name, results[0]!.type, graph);
   }
   if (node.type === "album") return false;
+  return expandNodeById(node.id, node.name, node.type, graph);
+}
+
+/**
+ * Expand a node by its exact MBID (used when the user clicked a node in the
+ * graph — avoids name ambiguity, e.g. two artists both named "Fuzz").
+ */
+function expandFromDbById(id: string, graph: SceneGraph): boolean {
+  const node = findNodeById(id);
+  if (!node || node.type === "album") return false;
   return expandNodeById(node.id, node.name, node.type, graph);
 }
 
@@ -100,6 +111,9 @@ export function ExplorePage() {
   const [dbReady, setDbReady] = useState(isDbLoaded());
   const [error, setError] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<string | null>(null);
+  // Remembers the MBID of the last clicked node so a subsequent search can
+  // resolve by ID instead of by ambiguous name (e.g. two artists named "Fuzz").
+  const pendingNode = useRef<{ name: string; id: string } | null>(null);
 
   // Load the database on mount
   useEffect(() => {
@@ -118,7 +132,12 @@ export function ExplorePage() {
         if (!isDbLoaded()) {
           await getDb();
         }
-        const found = expandFromDb(artistName, graph);
+        // Resolve by exact MBID if the query matches the last-clicked node, else by name
+        const resolution = resolveSearchTarget(artistName, pendingNode.current);
+        const found = resolution.by === "id"
+          ? expandFromDbById(resolution.id, graph)
+          : expandFromDb(resolution.name, graph);
+        pendingNode.current = null;
         if (!found) {
           setError(`No artist found for "${artistName}" in the database`);
         } else {
@@ -138,6 +157,7 @@ export function ExplorePage() {
     graph.clear();
     setGraphData(graph.toForceGraphData());
     setSelectedNode(null);
+    pendingNode.current = null;
     setError(null);
   }, [graph]);
 
@@ -148,6 +168,8 @@ export function ExplorePage() {
         setSelectedNode(graphNode ?? null);
         if (graphNode) {
           setPrefill(graphNode.name);
+          // Remember this exact node so search resolves by MBID, not name
+          pendingNode.current = { name: graphNode.name, id: graphNode.id };
         }
       }
     },

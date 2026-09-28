@@ -4,6 +4,8 @@
 
 A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages.
 
+Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships).
+
 ## Tech stack
 
 - Vite + React 18 + TypeScript
@@ -61,6 +63,18 @@ Discover mode (venue recommendations):
             → Reports artists missing from SQLite via report-miss function
             → Fetches their venues by MBID in background, merges into results
         → Venues ranked by total show count across all queried artists
+
+Similarity mode (artist-to-scene fit scoring):
+    User enters a list of artists + one target artist to compare
+        → Loads browser SQLite (same DB as Explore/Play)
+        → For each list artist, collects connections to the target across ALL
+          relationships: direct edges, shared neighbors, and shared album credits
+        → Each connection weighted by relationship type (REL_WEIGHTS):
+          member_of > former_member_of > support_musician; album credits scored
+          by shared-credit count (albumCreditWeight, diminishing returns)
+        → Per-pair score = 70% connection strength + 30% BFS proximity (all rels)
+        → Overall = 60% best pair + 40% average (rewards multiple independent paths)
+        → Fully client-side; no backend. Weights are placeholders, tunable in similarity.ts
 ```
 
 ## File structure
@@ -83,9 +97,14 @@ src/
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
 │   │                       Supports random, custom (any two connected nodes), and shared (MBID URL) games.
 │   ├── DiscoverPage.tsx  — Venue recommendations: city + artists → venues. Progressive loading via BFS.
+│   ├── SimilarityPage.tsx — Similarity Score: list of artists + target artist → 0–100 fit score.
+│   │                       Wires graphDb into the similarity.ts GraphAccess; renders weighted breakdown.
+│   ├── similarity.ts     — Pure scoring logic (GraphAccess interface, testable without sql.js).
+│   │                       REL_WEIGHTS per relationship type (placeholders), album-credit weighting,
+│   │                       per-pair + aggregate scoring. Uses ALL graph relationships.
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/
-│   ├── Layout.tsx        — Shared nav bar with Explore/Play/About links.
+│   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links.
 │   ├── SearchBar.tsx     — Search input, expand, reset, settings. Responsive layout.
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas (solid=expanded, outline=unexpanded).
 │   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) for node details.
@@ -102,7 +121,7 @@ src/
 │   ├── setup.ts          — Vitest setup (localStorage shim for Node env).
 │   ├── musicbrainz.integration.test.ts — Regression tests for recurring MB bugs (stubbed fetch).
 │   └── fixtures/         — Captured MusicBrainz API responses (search-fuzz, artist-arctic-monkeys, etc.).
-├── App.tsx               — Router (HashRouter, 3 routes).
+├── App.tsx               — Router (HashRouter, 5 routes: Explore, Play, Discover, Similarity, About).
 ├── main.tsx              — Entry point.
 ├── vite-env.d.ts         — Vite type declarations.
 ├── sql.js.d.ts           — sql.js type declarations.
@@ -164,6 +183,7 @@ CREATE TABLE edges (
 - **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS.
 - **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
 - **Explore only shows artists**: Album nodes filtered from search results and neighbor expansion.
+- **Similarity scoring (relationship-weighted)**: Uses ALL graph relationships. Each connection is weighted by `rel_type` via `REL_WEIGHTS` in `src/pages/similarity.ts` — `member_of` (1.0) > `former_member_of` (0.75) > `support_musician` (0.6); album-credit rel types (producer/vocal/instrument/mix/engineer/recording) are low individually (0.3–0.4) but accrue strength via the *count* of shared credits (`albumCreditWeight`, saturating at `ALBUM_CREDIT_MAX`). Unknown types fall back to `DEFAULT_REL_WEIGHT`. Per-pair = 70% connection strength + 30% BFS proximity; overall = 60% best + 40% average. **All weights are placeholders**, isolated at the top of `similarity.ts` for later tuning (e.g. once per-edge relationship attributes/credit counts are stored — the current `edges` schema has no detail column). Logic is decoupled from React/sql.js via a small `GraphAccess` interface, so it's unit-tested with an in-memory fake graph.
 - **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
 - **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
 - **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.
@@ -204,6 +224,8 @@ Vitest tests in `src/test/musicbrainz.integration.test.ts` are regression guards
 - Supporting musician extraction (Arctic Monkeys → Tom Rowley, Tyler Parkford)
 
 The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To refresh a fixture, re-capture the MusicBrainz API response for the relevant MBID.
+
+`src/test/similarity.test.ts` unit-tests the Similarity scoring logic (`src/pages/similarity.ts`) against an in-memory fake graph (no sql.js needed). Covers: relationship-weight ordering (member_of > former_member_of > support_musician > album credits), album-credit weighting by shared-credit count with saturation, connection detection (shared bandmates and shared albums), band-tied vs album-only ranking, unreachable artists scoring zero, unknown/not-found artists, breakdown sort order, and the best/average aggregate.
 
 ## Backend (Supabase)
 

@@ -39,6 +39,21 @@ export function AboutPage() {
           for future queries.
         </p>
 
+        <h2 style={styles.heading}>Similarity Score</h2>
+        <p style={styles.paragraph}>
+          Give the app a list of artists you like plus one artist to compare, and it scores how
+          closely that artist fits the group — from 0 (no connection) to 100 (same musical world).
+          The score uses every relationship in the graph: band memberships, former memberships,
+          supporting roles, and album credits.
+        </p>
+        <p style={styles.paragraph}>
+          Not all connections count equally. Current band members are the strongest signal, former
+          members slightly less, and supporting musicians less again. Album collaborations are
+          weighted by how many credits two artists share. The breakdown shows exactly how each
+          connection was made — the shared bandmates, side projects, and albums that link them —
+          so a strong match is never a black box.
+        </p>
+
         <h2 style={styles.heading}>Data</h2>
         <p style={styles.paragraph}>
           Powered by a precomputed graph database built from{" "}
@@ -56,8 +71,8 @@ export function AboutPage() {
           (public domain).
         </p>
         <p style={styles.paragraph}>
-          Explore and Play use a SQLite database loaded in your browser via WebAssembly (~60MB,
-          cached after first visit). Discover queries a backend database that fetches and caches
+          Explore, Play, and Similarity use a SQLite database loaded in your browser via WebAssembly
+          (~60MB, cached after first visit). Discover queries a backend database that fetches and caches
           venue data on demand.
         </p>
 

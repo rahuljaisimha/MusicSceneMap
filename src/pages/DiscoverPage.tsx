@@ -1,11 +1,21 @@
 import { useState } from "react";
 import { searchVenuesForArtists, searchVenuesByMbid, type VenueResult } from "../api/supabase";
+import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarEvent } from "../api/pollstar";
+import { buildGraphAccess } from "./graphAccess";
+import { rankConcerts, dedupeEvents, type RankedConcert } from "./concerts";
+
+type DiscoverMode = "venues" | "concerts";
+
+/** How many top venues to pull concerts from. */
+const CONCERT_VENUE_LIMIT = 8;
 
 export function DiscoverPage() {
+  const [mode, setMode] = useState<DiscoverMode>("venues");
   const [city, setCity] = useState("");
   const [artistInput, setArtistInput] = useState("");
   const [artists, setArtists] = useState<string[]>([]);
   const [results, setResults] = useState<Array<VenueResult & { artists: string[] }> | null>(null);
+  const [concerts, setConcerts] = useState<RankedConcert[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -148,14 +158,103 @@ export function DiscoverPage() {
     }
   };
 
+  /**
+   * Concerts flow: find the top venues in the city (reusing the venue search),
+   * resolve each to a Pollstar venue, fetch upcoming events, and rank every
+   * concert by how similar its headline artist is to the user's list.
+   * Pollstar requests are paced ~1/sec inside the client; the first fires ASAP.
+   */
+  const handleFindConcerts = async () => {
+    if (!city.trim() || artists.length === 0) return;
+    setLoading(true);
+    setError(null);
+    setConcerts(null);
+
+    const cityName = city.trim();
+
+    try {
+      // 1. Top venues in the city (from the existing Setlist.fm-backed search).
+      const venueResults = await searchVenuesForArtists(artists, cityName);
+      const topVenueNames = venueResults.slice(0, CONCERT_VENUE_LIMIT).map((v) => v.venue);
+
+      // 2. Resolve each venue name to a Pollstar venue in the same city.
+      const cityLower = cityName.toLowerCase();
+      const pollstarVenueIds = new Map<string, string>(); // id -> name (dedupe)
+      for (const name of topVenueNames) {
+        try {
+          const matches = await pollstarSearchVenues(name);
+          const inCity = matches.find(
+            (m) => (m.city ?? "").toLowerCase() === cityLower || (m.location ?? "").toLowerCase().includes(cityLower)
+          );
+          const chosen = inCity ?? matches[0];
+          if (chosen && !pollstarVenueIds.has(chosen.id)) {
+            pollstarVenueIds.set(chosen.id, chosen.name);
+          }
+        } catch {
+          // Skip venues Pollstar can't resolve.
+        }
+      }
+
+      if (pollstarVenueIds.size === 0) {
+        setConcerts([]);
+        setLoading(false);
+        return;
+      }
+
+      // 3. Fetch upcoming events for each resolved venue.
+      const allEvents: PollstarEvent[] = [];
+      for (const venueId of pollstarVenueIds.keys()) {
+        try {
+          const events = await getUpcomingEvents(venueId);
+          allEvents.push(...events);
+        } catch {
+          // Skip venues whose events fail to load.
+        }
+      }
+
+      // 4. Rank by headline-artist similarity to the taste list (graph-based).
+      const graph = await buildGraphAccess();
+      const ranked = rankConcerts(graph, dedupeEvents(allEvents), artists);
+      setConcerts(ranked);
+      setLoading(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = () => {
+    if (mode === "venues") handleSearch();
+    else handleFindConcerts();
+  };
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
         <div style={styles.header}>
-          <h1 style={styles.title}>Discover Venues</h1>
+          <h1 style={styles.title}>{mode === "venues" ? "Discover Venues" : "Discover Concerts"}</h1>
           <p style={styles.subtitle}>
-            Find venues in a city based on artists you like.
+            {mode === "venues"
+              ? "Find venues in a city based on artists you like."
+              : "Find upcoming concerts at a city's top venues, ranked by how well the artist fits your taste."}
           </p>
+        </div>
+
+        <div style={styles.toggle}>
+          <button
+            type="button"
+            onClick={() => setMode("venues")}
+            style={{ ...styles.toggleBtn, ...(mode === "venues" ? styles.toggleActive : {}) }}
+          >
+            Venues
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("concerts")}
+            style={{ ...styles.toggleBtn, ...(mode === "concerts" ? styles.toggleActive : {}) }}
+          >
+            Concerts
+          </button>
         </div>
 
         <div style={styles.form}>
@@ -209,21 +308,23 @@ export function DiscoverPage() {
           </div>
 
           <button
-            onClick={handleSearch}
+            onClick={handleSubmit}
             disabled={loading || !city.trim() || artists.length === 0}
             style={styles.searchBtn}
           >
-            {loading ? "Searching…" : "Find Venues"}
+            {loading
+              ? mode === "venues" ? "Searching…" : "Finding concerts…"
+              : mode === "venues" ? "Find Venues" : "Find Concerts"}
           </button>
         </div>
 
         {error && <p style={styles.error}>{error}</p>}
 
-        {results && results.length === 0 && (
+        {mode === "venues" && results && results.length === 0 && (
           <p style={styles.noResults}>No venues found for these artists in {city}.</p>
         )}
 
-        {results && results.length > 0 && (
+        {mode === "venues" && results && results.length > 0 && (
           <div style={styles.results}>
             <h2 style={styles.resultsTitle}>
               Venues in {city} ({results.length})
@@ -243,13 +344,86 @@ export function DiscoverPage() {
             ))}
           </div>
         )}
+
+        {mode === "concerts" && concerts && concerts.length === 0 && (
+          <p style={styles.noResults}>No upcoming concerts found at {city}'s top venues.</p>
+        )}
+
+        {mode === "concerts" && concerts && concerts.length > 0 && (
+          <div style={styles.results}>
+            <h2 style={styles.resultsTitle}>
+              Upcoming concerts in {city} ({concerts.length})
+            </h2>
+            {concerts.map((c) => (
+              <div key={c.id} style={styles.venueCard}>
+                <div style={styles.venueHeader}>
+                  <span style={styles.venueName}>{c.artistName}</span>
+                  {c.artistFound ? (
+                    <span style={{ ...styles.showCount, color: scoreColor(c.score) }}>
+                      {c.score}% match
+                    </span>
+                  ) : (
+                    <span style={styles.notFound}>not in graph</span>
+                  )}
+                </div>
+                <div style={styles.concertMeta}>
+                  {formatDate(c.playDate)} · {c.venueName}
+                  {c.isFestival ? " · Festival" : ""}
+                </div>
+                {c.supportingArtists.length > 0 && (
+                  <div style={styles.venueArtists}>
+                    {c.supportingArtists.slice(0, 6).map((a) => (
+                      <span key={a} style={styles.artistTag}>{a}</span>
+                    ))}
+                  </div>
+                )}
+                {c.tickets.length > 0 && (
+                  <div style={styles.ticketRow}>
+                    {c.tickets.map((t, ti) => (
+                      <a
+                        key={ti}
+                        href={t.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={styles.ticketLink}
+                      >
+                        {t.name}{t.time ? ` · ${t.time}` : ""}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+/** Format an ISO play date as a readable local date. */
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
+function scoreColor(score: number): string {
+  if (score >= 70) return "#55efc4";
+  if (score >= 40) return "#feca57";
+  if (score >= 15) return "#ff9f43";
+  return "#636e72";
+}
+
 const styles: Record<string, React.CSSProperties> = {
   page: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
+  toggle: { display: "flex", gap: "0.25rem", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", padding: "0.25rem" },
+  toggleBtn: { padding: "0.4rem 1.1rem", borderRadius: "4px", border: "none", background: "transparent", color: "#888", fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" },
+  toggleActive: { background: "#ff6b6b", color: "#fff" },
+  notFound: { fontSize: "0.72rem", color: "#636e72", fontStyle: "italic" },
+  concertMeta: { fontSize: "0.8rem", color: "#aaa", marginBottom: "0.4rem" },
+  ticketRow: { display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.5rem" },
+  ticketLink: { fontSize: "0.75rem", color: "#48dbfb", textDecoration: "none", border: "1px solid rgba(72, 219, 251, 0.3)", borderRadius: "10px", padding: "0.15rem 0.6rem" },
   container: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "1.5rem", overflowY: "auto", gap: "1.25rem" },
   header: { textAlign: "center" },
   title: { fontSize: "1.6rem", fontWeight: 700, color: "#e0e0e0", marginBottom: "0.25rem" },

@@ -11,6 +11,16 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/setlistfm-api/, "/rest/1.0"),
       },
+      "/pollstar-ac": {
+        target: "https://autocomplete.pollstar.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/pollstar-ac/, ""),
+      },
+      "/pollstar-api": {
+        target: "https://www.pollstar.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/pollstar-api/, ""),
+      },
     },
   },
 }));

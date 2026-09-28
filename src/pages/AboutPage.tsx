@@ -38,6 +38,12 @@ export function AboutPage() {
           related bands for richer recommendations. Data comes from Setlist.fm and is cached
           for future queries.
         </p>
+        <p style={styles.paragraph}>
+          Toggle to <strong>Concerts</strong> to see upcoming shows at the city's top venues,
+          ranked by how well each concert's artist fits your taste — reusing the same graph-based
+          similarity scoring. Upcoming event data comes from Pollstar (fetched live in your browser
+          and cached for 24 hours). Artists not yet in the graph are shown but ranked lowest.
+        </p>
 
         <h2 style={styles.heading}>Similarity Score</h2>
         <p style={styles.paragraph}>
@@ -64,7 +70,10 @@ export function AboutPage() {
           <a href="https://www.setlist.fm" target="_blank" rel="noreferrer" style={styles.link}>
             Setlist.fm
           </a>{" "}
-          (venues, concert history). MusicBrainz data is under{" "}
+          (venues, concert history). Upcoming concert listings come from{" "}
+          <a href="https://www.pollstar.com" target="_blank" rel="noreferrer" style={styles.link}>
+            Pollstar
+          </a>. MusicBrainz data is under{" "}
           <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noreferrer" style={styles.link}>
             CC0
           </a>{" "}

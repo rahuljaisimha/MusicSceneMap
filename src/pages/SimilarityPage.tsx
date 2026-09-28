@@ -1,28 +1,6 @@
 import { useState } from "react";
-import { computeSimilarity, type GraphAccess, type SimNode, type SimNeighbor, type SimilarityResult } from "./similarity";
-
-/**
- * Build a GraphAccess backed by the real sql.js graph DB. Uses ALL relationships
- * (band memberships, support roles, and album credits) so the scorer can weight
- * each connection by type.
- */
-async function buildGraphAccess(): Promise<GraphAccess> {
-  const { getDb, findNodeByName, getNeighbors } = await import("../db/graphDb");
-  await getDb();
-
-  return {
-    findNodeByName(name: string): SimNode | null {
-      const node = findNodeByName(name);
-      return node ? { id: node.id, name: node.name, type: node.type } : null;
-    },
-    neighbors(nodeId: string): SimNeighbor[] {
-      return getNeighbors(nodeId).map(({ node, relType }) => ({
-        node: { id: node.id, name: node.name, type: node.type },
-        relType,
-      }));
-    },
-  };
-}
+import { computeSimilarity, type SimilarityResult } from "./similarity";
+import { buildGraphAccess } from "./graphAccess";
 
 function scoreColor(score: number): string {
   if (score >= 70) return "#55efc4";

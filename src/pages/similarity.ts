@@ -379,6 +379,22 @@ export function computeSimilarity(
 }
 
 /**
+ * Score a single artist (by name) against a list of artists, returning just the
+ * overall 0..100 similarity. Convenience wrapper around `computeSimilarity` for
+ * ranking external candidates (e.g. concert headliners) against a taste profile.
+ *
+ * An artist not present in the graph scores 0 (see `SimilarityResult.targetFound`).
+ */
+export function scoreArtistAgainstList(
+  graph: GraphAccess,
+  artistName: string,
+  listArtists: string[]
+): { score: number; found: boolean; result: SimilarityResult } {
+  const result = computeSimilarity(graph, artistName, listArtists);
+  return { score: result.overallScore, found: result.targetFound, result };
+}
+
+/**
  * Aggregate per-pair scores into an overall 0..100 similarity.
  *
  * 60% best connection, 40% average across the list — a single very strong

@@ -4,7 +4,7 @@
 
 A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages.
 
-Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships).
+Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity.
 
 ## Tech stack
 
@@ -75,6 +75,16 @@ Similarity mode (artist-to-scene fit scoring):
         → Per-pair score = 70% connection strength + 30% BFS proximity (all rels)
         → Overall = 60% best pair + 40% average (rewards multiple independent paths)
         → Fully client-side; no backend. Weights are placeholders, tunable in similarity.ts
+
+Discover — Concerts mode (upcoming event recommendations):
+    User toggles to "Concerts", enters city + artists
+        → Runs the venue search to get the city's top venue NAMES
+        → Resolves each to a Pollstar venue via autocomplete (matches city)
+        → Fetches upcoming events per venue from Pollstar (fromDate = today)
+        → Ranks each concert by headline-artist similarity to the list (similarity.ts)
+        → Artists not in the graph score 0, shown but ranked last (flagged)
+        → Pollstar calls run in-browser: ~1 req/sec pacing (first fires ASAP),
+          24h localStorage cache. CORS via Vite dev proxy / corsproxy.io in prod.
 ```
 
 ## File structure
@@ -96,12 +106,17 @@ src/
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
 │   │                       Supports random, custom (any two connected nodes), and shared (MBID URL) games.
-│   ├── DiscoverPage.tsx  — Venue recommendations: city + artists → venues. Progressive loading via BFS.
+│   ├── DiscoverPage.tsx  — Venue + concert recommendations. Venues/Concerts toggle. Venues: city + artists
+│   │                       → venues (progressive BFS). Concerts: top venues → Pollstar upcoming events,
+│   │                       ranked by headline-artist similarity (similarity.ts).
 │   ├── SimilarityPage.tsx — Similarity Score: list of artists + target artist → 0–100 fit score.
 │   │                       Wires graphDb into the similarity.ts GraphAccess; renders weighted breakdown.
 │   ├── similarity.ts     — Pure scoring logic (GraphAccess interface, testable without sql.js).
 │   │                       REL_WEIGHTS per relationship type (placeholders), album-credit weighting,
-│   │                       per-pair + aggregate scoring. Uses ALL graph relationships.
+│   │                       per-pair + aggregate scoring, scoreArtistAgainstList helper. Uses ALL relationships.
+│   ├── concerts.ts       — Pure concert-ranking logic: flatten Pollstar events, score headline artist
+│   │                       via similarity.ts, sort by score then date. Memoizes per-artist scores.
+│   ├── graphAccess.ts    — Shared builder for a graphDb-backed GraphAccess (used by Similarity + Concerts).
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/
 │   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links.
@@ -112,9 +127,11 @@ src/
 │   └── DebugConsole.tsx  — Collapsible log console.
 ├── api/
 │   ├── supabase.ts       — Client for Supabase edge functions (venue search, aggregation).
+│   ├── pollstar.ts       — Browser Pollstar client: venue autocomplete + upcoming events.
+│   │                       ~1 req/sec pacing (first fires ASAP), 24h cache, CORS via proxy.
 │   ├── musicbrainz.ts    — (Legacy) Live MusicBrainz API client. Unused now.
 │   ├── setlistfm.ts      — (Legacy) Live Setlist.fm API client.
-│   └── cache.ts          — (Legacy) localStorage request cache.
+│   └── cache.ts          — localStorage request cache with TTL (used by pollstar.ts, 24h).
 ├── debug/
 │   └── DebugLog.ts       — Singleton log store.
 ├── test/
@@ -183,7 +200,7 @@ CREATE TABLE edges (
 - **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS.
 - **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
 - **Explore only shows artists**: Album nodes filtered from search results and neighbor expansion.
-- **Similarity scoring (relationship-weighted)**: Uses ALL graph relationships. Each connection is weighted by `rel_type` via `REL_WEIGHTS` in `src/pages/similarity.ts` — `member_of` (1.0) > `former_member_of` (0.75) > `support_musician` (0.6); album-credit rel types (producer/vocal/instrument/mix/engineer/recording) are low individually (0.3–0.4) but accrue strength via the *count* of shared credits (`albumCreditWeight`, saturating at `ALBUM_CREDIT_MAX`). Unknown types fall back to `DEFAULT_REL_WEIGHT`. Per-pair = 70% connection strength + 30% BFS proximity; overall = 60% best + 40% average. **All weights are placeholders**, isolated at the top of `similarity.ts` for later tuning (e.g. once per-edge relationship attributes/credit counts are stored — the current `edges` schema has no detail column). Logic is decoupled from React/sql.js via a small `GraphAccess` interface, so it's unit-tested with an in-memory fake graph.
+- **Concert recommendations (Pollstar, client-side)**: Discover's Concerts toggle fetches upcoming events live in the browser (kept fresh, 24h localStorage cache) rather than via a backend — so results are always current and there's no scrape job to maintain. Pollstar requests are paced ~1 req/sec (first fires immediately) with a realistic UA; CORS handled by Vite dev proxy / corsproxy.io in prod (same pattern as setlistfm). Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
 - **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
 - **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
 - **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.
@@ -226,6 +243,8 @@ Vitest tests in `src/test/musicbrainz.integration.test.ts` are regression guards
 The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To refresh a fixture, re-capture the MusicBrainz API response for the relevant MBID.
 
 `src/test/similarity.test.ts` unit-tests the Similarity scoring logic (`src/pages/similarity.ts`) against an in-memory fake graph (no sql.js needed). Covers: relationship-weight ordering (member_of > former_member_of > support_musician > album credits), album-credit weighting by shared-credit count with saturation, connection detection (shared bandmates and shared albums), band-tied vs album-only ranking, unreachable artists scoring zero, unknown/not-found artists, breakdown sort order, and the best/average aggregate.
+
+`src/test/concerts.test.ts` unit-tests the concert-ranking logic (`src/pages/concerts.ts`) and Pollstar response parsing (`src/api/pollstar.ts`). Covers: headline-artist selection, ranking graph-known artists above unknowns (score 0), tie-break by soonest date, per-artist score memoization, supporting-artist listing, event dedupe, and `parseVenues`/`parseEvents`/`formatPollstarDate` field mapping. All offline (no network).
 
 ## Backend (Supabase)
 
@@ -274,12 +293,14 @@ supabase functions deploy venue-search --project-ref lwqkjtzqjgacgvfjiyxg
 - **Legend on graph canvas**: Color key for node/edge types.
 - **Scene detection**: Graph algorithms to identify communities/scenes automatically.
 - **Travel mode**: Input a city, show relevant venues/scenes filtered by taste (requires venue data).
-- **Upcoming shows / Concert Finder (blocked — no good data source)**: Explored adding a "Discover Shows" mode that recommends upcoming concerts at discovered venues within a date range. Findings:
+- **Upcoming shows / Concert Finder (IMPLEMENTED via Pollstar)**: Discover → Concerts toggle recommends upcoming concerts at a city's top venues, ranked by artist similarity. Data-source investigation history:
   - **Setlist.fm API** — only has *past* setlists, no upcoming shows. Website has upcoming shows on venue pages (`upcomingSetlistsList`) and they scrape cleanly, but listings are sparse.
   - **Songkick** — has more complete upcoming show data, but the website blocks scraping (HTTP 406, aggressive bot protection) and the official API requires a paid commercial partnership (no free/hobbyist tier).
   - **JamBase** — excellent fit (MBID-keyed via `/v3/artists/id/musicbrainz:{mbid}`, aggregates 25+ ticketing sources, structured data), but only a 14-day free trial then paid.
   - **Ticketmaster Discovery API** — free, but only lists LiveNation/Ticketmaster events (limited coverage).
   - **Songkick API** with MBID support (`/artists/mbid:{mbid}/calendar`) would be ideal but is paid-only.
-  - **Decision**: Parked for now. Revisit if a free MBID-compatible events source appears, or if paying for JamBase/Songkick becomes worthwhile.
+  - **Pollstar (IMPLEMENTED)** — Pollstar's website backs onto public JSON endpoints that return genuine *upcoming* events with artist names, dates, and ticket links: autocomplete (`autocomplete.pollstar.com/global/All/100/{q}`, filter EntityType=Venue) and events (`www.pollstar.com/api/companies/{venueId}/events?fromDate=...`). `fromDate` must be today-or-later (past dates are subscription-gated). This powers the Discover → Concerts toggle: top venues → Pollstar events → ranked by headline-artist similarity. Fetched in-browser (CORS via proxy), ~1 req/sec, 24h cache. Artists not in the graph score 0 and rank last. See `src/api/pollstar.ts` + `src/pages/concerts.ts`.
+  - **Original decision (superseded)**: Parked pending a free MBID-compatible source; Pollstar's public endpoints filled that gap.
+  - **Future hit-rate improvements**: more artists in the SQLite graph, a backend fallback lookup when an artist isn't in the graph, or MBID resolution via MusicBrainz to enrich matching.
 - **Setlist.fm integration**: Venue data, touring-together inference via shared date+venue.
 - **PostgreSQL backend (future)**: For complex graph queries, venue recommendations, multi-user leaderboards.

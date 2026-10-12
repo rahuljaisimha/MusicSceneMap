@@ -1,0 +1,13 @@
+# Cloudflare Pages: exclude the graph database from the asset upload.
+#
+# Cloudflare Pages/Workers caps a single static asset at 25 MiB; graph.db.gz is
+# larger, which fails the deploy. On Cloudflare the app loads the graph from the
+# CDN instead (VITE_GRAPH_DB_URL -> Cloudflare R2), so the file isn't needed in
+# the uploaded output. See docs/CDN_HOSTING.md.
+#
+# Vite copies everything in public/ to the root of dist/, so this file lands at
+# dist/.assetsignore automatically. It is Cloudflare-specific; GitHub Pages and
+# local dev ignore it and keep serving public/graph.db.gz same-origin.
+#
+# Patterns are gitignore-style, relative to the output root.
+graph.db*

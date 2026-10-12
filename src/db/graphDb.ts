@@ -35,21 +35,48 @@ export async function getDb(): Promise<DB> {
 
     const SQL = await initSqlJs(config);
 
-    // Fetch the database file (gzipped)
-    const dbUrl = `${import.meta.env.BASE_URL}graph.db.gz`;
+    // Fetch the database file (gzipped).
+    //
+    // Order of preference:
+    //   1. Same-origin committed file (`<base>/graph.db.gz`) — fast, no CORS.
+    //   2. VITE_GRAPH_DB_URL (CDN, e.g. Cloudflare R2) — fallback when the local
+    //      file isn't available (fresh clone without a regen, or a host that
+    //      can't serve the file such as Cloudflare Pages' 25 MiB asset cap).
+    //
+    // Locally this means dev uses your generated public/graph.db.gz when present
+    // and transparently falls back to the CDN when it isn't.
+    const localUrl = `${import.meta.env.BASE_URL}graph.db.gz`;
+    const cdnUrl = import.meta.env.VITE_GRAPH_DB_URL;
+    const candidates = [localUrl, cdnUrl].filter((u): u is string => Boolean(u));
 
-    const response = await fetch(dbUrl);
-    if (!response.ok || response.headers.get("content-type") === "text/html") {
+    let buffer: ArrayBuffer | null = null;
+    const errors: string[] = [];
+    for (const url of candidates) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok || response.headers.get("content-type") === "text/html") {
+          errors.push(`${url} → ${response.status} ${response.headers.get("content-type") ?? ""}`.trim());
+          continue;
+        }
+        buffer = await response.arrayBuffer();
+        break;
+      } catch (e) {
+        // Network/CORS failure — try the next candidate.
+        errors.push(`${url} → ${e instanceof Error ? e.message : "fetch failed"}`);
+      }
+    }
+
+    if (!buffer) {
       throw new Error(
-        "graph.db.gz not found. Run 'python3 scripts/process_mb_dump.py' to generate it."
+        "Graph database could not be loaded. Run 'python3 scripts/process_mb_dump.py' to generate " +
+        "public/graph.db.gz, or set VITE_GRAPH_DB_URL to a reachable CDN URL. Tried: " +
+        errors.join("; ")
       );
     }
 
-    let buffer = await response.arrayBuffer();
-
     // Check if we need to manually decompress:
     // If Content-Encoding: gzip was set, browser already decompressed it.
-    // If not (e.g., GitHub Pages), we get raw gzip bytes — detect via magic number.
+    // If not (e.g., GitHub Pages / R2 raw bytes), detect gzip via magic number.
     const header = new Uint8Array(buffer, 0, 2);
     if (header[0] === 0x1f && header[1] === 0x8b) {
       // Gzip magic number detected — need manual decompression

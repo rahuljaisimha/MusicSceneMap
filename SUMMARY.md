@@ -221,7 +221,7 @@ CREATE TABLE edges (
 - **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.
 - **Same-type pairs**: Game always pairs person↔person or group↔group.
 - **Vite base**: `/MusicSceneMap/` in production (GitHub Pages), `/` in dev.
-- **graph.db.gz committed to repo**: 61MB, under GitHub's 100MB limit. Deployed with the site, same origin = no CORS.
+- **graph.db.gz committed to repo**: Deployed with the site, same origin = no CORS. Fits GitHub's 100MB file limit. **Cloudflare Pages caps static assets at 25 MiB**, below the file size — to deploy there, host `graph.db.gz` on a CDN and set `VITE_GRAPH_DB_URL` (see `docs/CDN_HOSTING.md`). `graphDb.ts` uses `VITE_GRAPH_DB_URL || same-origin file`. **GitHub Releases was tried and rejected**: release-asset URLs 302-redirect to `objects.githubusercontent.com` without reliable `Access-Control-Allow-Origin`, so cross-origin `fetch` fails CORS. Use Cloudflare R2 (free egress, controllable CORS policy, serves raw gzip bytes so the magic-number decompression path still works) or jsDelivr.
 - **No backend**: Everything client-side. Static file hosting only.
 - **Game persistence**: 24h in localStorage. New Game clears and regenerates.
 - **Responsive**: Mobile-friendly, bottom sheet InfoPanel, no keyboard on node click.

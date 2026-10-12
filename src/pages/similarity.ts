@@ -53,6 +53,7 @@ export const REL_WEIGHTS: Record<string, number> = {
   member_of: 1.0, // current band member — strongest tie
   former_member_of: 0.75, // former member — slightly less
   support_musician: 0.6, // supporting/touring musician — slightly less again
+  collaborator: 0.5, // collapsed album co-credit (person↔person "collaborator" edge)
   // Album-credit relationship types. Each is a comparatively weak single tie;
   // strength accrues via the *count* of shared credits (see ALBUM_CREDIT_*).
   producer: 0.4,

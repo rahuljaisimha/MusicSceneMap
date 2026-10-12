@@ -535,6 +535,54 @@ def flatten_recording_credits_to_album_credits(
     return credits
 
 
+# Cap on how many collaborators one album can generate pairs for. Even after the
+# compilation filter, a busy album can create O(n^2) pairs; this bounds it.
+MAX_COLLAB_CONTRIBUTORS = 25
+
+
+def collapse_credits_to_collaborator_edges(
+    album_credits: list[tuple[str, str, str]],
+    reachable_gids: set[str],
+) -> list[tuple[str, str]]:
+    """
+    Collapse album co-credits into direct person<->person "collaborator" edges.
+
+    Two artists who both have a credit on the same album (release group) are
+    collaborators. This replaces album nodes + per-credit edges with a single
+    undirected edge per collaborating pair, greatly shrinking the graph and
+    removing high-degree album nodes (so the runtime compilation filter is no
+    longer needed).
+
+    Only pairs where BOTH endpoints are reachable are emitted. Returns a list of
+    (gid_a, gid_b) with gid_a < gid_b (deduped, undirected).
+    """
+    print("Collapsing album credits into collaborator edges...")
+
+    # album_gid -> set of reachable contributor gids
+    album_contributors: dict[str, set[str]] = defaultdict(set)
+    for artist_gid, album_gid, _credit_type in album_credits:
+        if artist_gid in reachable_gids:
+            album_contributors[album_gid].add(artist_gid)
+
+    pairs: set[tuple[str, str]] = set()
+    skipped_big = 0
+    for album_gid, contributors in album_contributors.items():
+        if len(contributors) < 2:
+            continue
+        if len(contributors) > MAX_COLLAB_CONTRIBUTORS:
+            # Guard against pair explosion on unusually crowded albums.
+            skipped_big += 1
+            continue
+        ordered = sorted(contributors)
+        for i in range(len(ordered)):
+            for j in range(i + 1, len(ordered)):
+                pairs.add((ordered[i], ordered[j]))
+
+    print(f"  Skipped {skipped_big} albums with >{MAX_COLLAB_CONTRIBUTORS} contributors")
+    print(f"  Collaborator edges: {len(pairs)}")
+    return list(pairs)
+
+
 # Maximum hops from seed artists to include in the browser SQLite
 MAX_HOPS = 6
 
@@ -604,8 +652,6 @@ def build_graph(
     artists: dict[int, dict],
     relationships: list[tuple[int, int, str]],
     album_credits: list[tuple[str, str, str]],
-    release_groups: dict[int, dict],
-    album_to_artist: dict[str, str],
     reachable_gids: set[str],
     output_path: Path,
 ):
@@ -613,18 +659,21 @@ def build_graph(
     Build unified graph and write to SQLite.
     Only includes nodes/edges where at least one endpoint is in reachable_gids.
 
+    Album nodes are NOT emitted. Album co-credits are collapsed into direct
+    person<->person "collaborator" edges (see collapse_credits_to_collaborator_edges),
+    which removes high-degree album nodes and shrinks the file.
+
     Schema:
         nodes(id TEXT PRIMARY KEY, name TEXT, type TEXT)
-            type: "person", "group", "album"
+            type: "person", "group"
         edges(source TEXT, target TEXT, rel_type TEXT)
-            rel_type: "member_of", "support_musician", "producer", "vocal", "instrument", "mix", "engineer", "recording"
+            rel_type: "member_of", "former_member_of", "support_musician", "collaborator"
         + indexes
     """
     import sqlite3
 
     print("Building graph...")
 
-    # Build artist id → gid mapping (only for reachable artists)
     type_map = {"1": "person", "2": "group", "3": "group", "4": "group", "5": "person", "6": "person"}
     edge_type_map = {
         "member of band": "member_of",
@@ -638,20 +687,8 @@ def build_graph(
 
     print(f"  Reachable artists: {len(reachable_gids)}")
 
-    # Filter album credits to only those involving reachable artists
-    filtered_credits = [(a, alb, ct) for a, alb, ct in album_credits if a in reachable_gids]
-    album_gids_needed = {alb for _, alb, _ in filtered_credits}
-
-    print(f"  Album credits (filtered): {len(filtered_credits)}")
-    print(f"  Albums needed: {len(album_gids_needed)}")
-
-    # Build album gid → data lookup
-    gid_to_album = {}
-    for rg_id, rg_data in release_groups.items():
-        if rg_data["gid"] in album_gids_needed:
-            gid_to_album[rg_data["gid"]] = rg_data
-
-    print(f"  Total album nodes: {len(gid_to_album)}")
+    # Collapse album credits into person<->person collaborator edges.
+    collaborator_pairs = collapse_credits_to_collaborator_edges(album_credits, reachable_gids)
 
     # Write SQLite
     if output_path.exists():
@@ -680,7 +717,7 @@ def build_graph(
         )
     """)
 
-    # Insert artist nodes (only reachable)
+    # Insert artist nodes (only reachable). No album nodes.
     node_count = 0
     for aid, data in artists.items():
         if data["gid"] in reachable_gids:
@@ -688,11 +725,6 @@ def build_graph(
             node_type = type_map.get(data["type"], "person") if data["type"] else "person"
             cur.execute("INSERT OR IGNORE INTO nodes (id, name, type) VALUES (?, ?, ?)", (data["gid"], name, node_type))
             node_count += 1
-
-    # Insert album nodes
-    for gid, data in gid_to_album.items():
-        cur.execute("INSERT OR IGNORE INTO nodes (id, name, type) VALUES (?, ?, ?)", (gid, data["name"], "album"))
-        node_count += 1
 
     # Insert artist-artist edges (deduplicated in Python)
     edge_count = 0
@@ -732,25 +764,14 @@ def build_graph(
                 cur.execute("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)", (gid0, gid1, mapped_type))
                 edge_count += 1
 
-    # Insert album credit edges (already deduplicated by flatten function)
-    for artist_gid, album_gid, credit_type in filtered_credits:
-        key = (artist_gid, album_gid, credit_type)
+    # Insert collaborator edges (collapsed album co-credits). Undirected, deduped.
+    for gid_a, gid_b in collaborator_pairs:
+        key = (gid_a, gid_b, "collaborator")
         if key not in seen_edges:
             seen_edges.add(key)
             cur.execute("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
-                        (artist_gid, album_gid, credit_type))
+                        (gid_a, gid_b, "collaborator"))
             edge_count += 1
-
-    # Insert album_by edges (album → primary artist/band)
-    for album_gid in gid_to_album:
-        primary_artist_gid = album_to_artist.get(album_gid)
-        if primary_artist_gid and primary_artist_gid in reachable_gids:
-            key = (album_gid, primary_artist_gid, "album_by")
-            if key not in seen_edges:
-                seen_edges.add(key)
-                cur.execute("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
-                            (album_gid, primary_artist_gid, "album_by"))
-                edge_count += 1
 
     # Create indexes
     print("  Creating indexes...")
@@ -820,8 +841,6 @@ def main():
 
     # Step 7: Parse recording credits (if tables exist)
     album_credits = []
-    release_groups = {}
-    album_to_artist = {}
     rec_table = DATA_DIR / "mbdump" / "l_artist_recording"
     if rec_table.exists() and relevant_artist_recording_ids:
         print()
@@ -836,16 +855,6 @@ def main():
         album_credits = flatten_recording_credits_to_album_credits(
             artist_recording_rels, recording_to_rg, release_groups, artists
         )
-
-        # Parse artist_credit_name to build album → primary artist mapping
-        print()
-        acn_table = DATA_DIR / "mbdump" / "artist_credit_name"
-        if acn_table.exists():
-            credit_to_artist = parse_artist_credit_name(DATA_DIR)
-            print()
-            album_to_artist = build_album_to_artist_mapping(release_groups, credit_to_artist, artists)
-        else:
-            print("  Skipping album→artist mapping (artist_credit_name not extracted)")
     else:
         print("\n  Skipping recording credits (tables not extracted)")
 
@@ -925,7 +934,7 @@ def main():
     # Step 9: Build and export SQLite graph
     print()
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    node_count, edge_count = build_graph(artists, relationships, album_credits, release_groups, album_to_artist, reachable_gids, OUTPUT_FILE)
+    node_count, edge_count = build_graph(artists, relationships, album_credits, reachable_gids, OUTPUT_FILE)
 
     file_size = OUTPUT_FILE.stat().st_size / (1024 * 1024)
     print()

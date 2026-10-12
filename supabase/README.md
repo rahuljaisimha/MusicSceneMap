@@ -94,6 +94,41 @@ ORDER BY times DESC;
 
 ---
 
+## graph-neighbors
+
+Tier-2 graph lookup for the client's tiered `GraphAccess`: resolves an artist and its 1-hop neighbors from the `relationships` table. Used as a fallback when an artist isn't in the browser's core SQLite graph (Tier 1). If Postgres also misses, the client falls back to MusicBrainz (Tier 3).
+
+### Endpoint
+
+```
+GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/graph-neighbors
+```
+
+### Parameters
+
+| Param | Required | Description |
+|---|---|---|
+| `mbid` | One of these | Artist MBID (preferred, unambiguous) |
+| `name` | One of these | Artist name (case-insensitive, exact match preferred) |
+
+### Response
+
+```json
+{
+  "found": true,
+  "artist": { "id": "<mbid>", "name": "The Sleeves", "type": "group" },
+  "neighbors": [
+    { "node": { "id": "<mbid>", "name": "Someone", "type": "person" }, "relType": "member_of" }
+  ]
+}
+```
+
+Misses are logged to `search_misses` with source `graph-neighbors-not-found`.
+
+> Note: Postgres is currently seeded with the SAME BFS-filtered universe as the SQLite graph (`seed_supabase.py`), so today it rarely has coverage the core graph lacks. It becomes the meaningful Tier-2 source once re-seeded with a larger universe. Until then MusicBrainz (Tier 3) does the real coverage lifting.
+
+---
+
 ## Deployment
 
 ```bash
@@ -109,6 +144,7 @@ supabase secrets set SETLISTFM_API_KEY=your-key --project-ref lwqkjtzqjgacgvfjiy
 # Deploy all functions
 supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy report-miss --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
+supabase functions deploy graph-neighbors --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
 
 ## Migrations

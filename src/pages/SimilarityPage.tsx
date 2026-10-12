@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { computeSimilarity, type SimilarityResult } from "./similarity";
-import { buildGraphAccess } from "./graphAccess";
+import { buildTieredGraphAccess } from "./tieredGraphAccess";
 
 function scoreColor(score: number): string {
   if (score >= 70) return "#55efc4";
@@ -67,8 +67,10 @@ export function SimilarityPage() {
     setResult(null);
 
     try {
-      const graph = await buildGraphAccess();
-      const res = computeSimilarity(graph, target.trim(), artists);
+      const tiered = await buildTieredGraphAccess();
+      // Resolve any artists missing from the core graph via Tier 2/3 first.
+      await tiered.prepareArtists([target.trim(), ...artists]);
+      const res = computeSimilarity(tiered.build(), target.trim(), artists);
       setResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");

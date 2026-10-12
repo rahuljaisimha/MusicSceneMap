@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { searchVenuesForArtists, searchVenuesByMbid, type VenueResult } from "../api/supabase";
 import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarEvent } from "../api/pollstar";
-import { buildGraphAccess } from "./graphAccess";
-import { rankConcerts, dedupeEvents, type RankedConcert } from "./concerts";
+import { buildTieredGraphAccess } from "./tieredGraphAccess";
+import { rankConcerts, dedupeEvents, headlineArtist, type RankedConcert } from "./concerts";
 
 type DiscoverMode = "venues" | "concerts";
 
@@ -213,8 +213,15 @@ export function DiscoverPage() {
       }
 
       // 4. Rank by headline-artist similarity to the taste list (graph-based).
-      const graph = await buildGraphAccess();
-      const ranked = rankConcerts(graph, dedupeEvents(allEvents), artists);
+      const events = dedupeEvents(allEvents);
+      const tiered = await buildTieredGraphAccess();
+      // Prefetch out-of-core artists (concert headliners are often small artists
+      // missing from the core graph) plus the user's list, via Tier 2/3.
+      const headliners = events
+        .map((e) => headlineArtist(e))
+        .filter((n): n is string => Boolean(n));
+      await tiered.prepareArtists([...new Set([...artists, ...headliners])]);
+      const ranked = rankConcerts(tiered.build(), events, artists);
       setConcerts(ranked);
       setLoading(false);
     } catch (e) {

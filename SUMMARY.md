@@ -116,7 +116,9 @@ src/
 │   │                       per-pair + aggregate scoring, scoreArtistAgainstList helper. Uses ALL relationships.
 │   ├── concerts.ts       — Pure concert-ranking logic: flatten Pollstar events, score headline artist
 │   │                       via similarity.ts, sort by score then date. Memoizes per-artist scores.
-│   ├── graphAccess.ts    — Shared builder for a graphDb-backed GraphAccess (used by Similarity + Concerts).
+│   ├── graphAccess.ts    — Shared builder for a graphDb-backed GraphAccess (core/Tier-1).
+│   ├── tieredGraphAccess.ts — Tiered GraphAccess: core sql.js → Postgres → MusicBrainz.
+│   │                       Async prepareArtists() prefetch + sync build() facade. Used by Similarity + Concerts.
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/
 │   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links.
@@ -146,6 +148,8 @@ src/
 
 scripts/
 ├── process_mb_dump.py    — Downloads MusicBrainz dump, builds browser SQLite graph.
+│                           Emits person/group nodes + band edges + collapsed "collaborator"
+│                           edges (album nodes removed; see collapse_credits_to_collaborator_edges).
 ├── seed_supabase.py      — Seeds Supabase Postgres with MusicBrainz data (BFS-filtered).
 ├── crawl_setlistfm.py    — Daily crawl job for Setlist.fm venue data.
 └── README.md             — Script documentation.
@@ -154,7 +158,9 @@ supabase/
 ├── functions/
 │   ├── venue-search/     — Edge function: on-demand venue lookup (artist + city → venues).
 │   │                       Resolves via DB then MusicBrainz. Caches, detects toured_with.
-│   └── report-miss/      — Edge function: logs artists missing from browser SQLite.
+│   ├── report-miss/      — Edge function: logs artists missing from browser SQLite.
+│   └── graph-neighbors/  — Edge function (Tier 2): artist + 1-hop neighbors from Postgres.
+│                           Logs misses to search_misses (graph-neighbors-not-found).
 ├── migrations/
 │   ├── 001_schema.sql    — PostgreSQL schema (artists, albums, venues, relationships).
 │   ├── 002_crawl_log.sql — Data freshness tracking.
@@ -185,11 +191,18 @@ CREATE TABLE nodes (
 CREATE TABLE edges (
     source TEXT NOT NULL,
     target TEXT NOT NULL,
-    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician",
-                           -- "producer", "vocal", "instrument", "mix", "engineer", "recording"
+    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician", "collaborator"
 );
 
 -- Indexes: edges(source), edges(target), edges(rel_type), nodes(name COLLATE NOCASE), nodes(type)
+--
+-- NOTE (Option 4 core-shrink): the pipeline (process_mb_dump.py) now emits a
+-- SMALLER core graph — person/group nodes only (NO album nodes), with album
+-- co-credits collapsed into direct person<->person "collaborator" edges. The
+-- older album-node schema (type "album"; rel_types producer/vocal/instrument/
+-- mix/engineer/recording/album_by) is still what the CURRENTLY COMMITTED
+-- graph.db.gz contains; the collaborator schema takes effect on the next regen.
+-- The app handles both (album nodes are simply absent after regen).
 ```
 
 ## Key design decisions
@@ -201,6 +214,8 @@ CREATE TABLE edges (
 - **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
 - **Explore only shows artists**: Album nodes filtered from search results and neighbor expansion.
 - **Concert recommendations (Pollstar, client-side)**: Discover's Concerts toggle fetches upcoming events live in the browser (kept fresh, 24h localStorage cache) rather than via a backend — so results are always current and there's no scrape job to maintain. Pollstar requests are paced ~1 req/sec (first fires immediately) with a realistic UA; CORS handled by Vite dev proxy / corsproxy.io in prod (same pattern as setlistfm). Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
+- **Tiered graph coverage (Option 4)**: `src/pages/tieredGraphAccess.ts` wraps the core sql.js `GraphAccess` and, for artists NOT in the core graph, falls back through Tier 2 (Postgres `graph-neighbors` edge function) → Tier 3 (MusicBrainz live). (Discogs is a planned Tier 4, deferred.) Because the scorer's `GraphAccess` is synchronous but Tier 2/3 are async, it works in two phases: `prepareArtists(names)` (async prefetch of out-of-core artists → node + 1-hop neighbors, cached 24h, concurrent dupes deduped/shared) then `build()` returns a sync facade (core first, then overlay). Similarity and Concerts call `prepareArtists` before scoring, so out-of-core artists (esp. small concert headliners) now resolve instead of scoring 0. Tier 2 returns 1 hop only — reduced multi-hop accuracy for out-of-core artists is an accepted tradeoff. NOTE: Postgres is currently seeded with the SAME BFS-filtered universe as SQLite (`seed_supabase.py`), so Tier 3 (MusicBrainz) does the real coverage lifting until Postgres is re-seeded larger.
+- **Core-graph shrink (Option 4 pipeline)**: `process_mb_dump.py` no longer emits album nodes. Album co-credits are collapsed into undirected `person —collaborator→ person` edges (`collapse_credits_to_collaborator_edges`), removing high-degree album nodes (the runtime compilation filter becomes a no-op) and shrinking the download. `collaborator` has a placeholder weight (0.5) in `similarity.ts`. Requires a regen to take effect; the committed graph.db.gz still uses the album-node schema.
 - **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
 - **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
 - **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.

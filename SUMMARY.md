@@ -25,7 +25,7 @@ Data pipeline (offline, run manually):
         → BFS from ~145 seed artists (6 hops via member_of/support_musician)
         → Deduplicates memberships (any active = current, not former)
         → SQLite database: nodes (persons, groups, albums) + edges
-        → Output: public/graph.db.gz (~61MB, committed to repo)
+        → Output: public/graph.db.gz (~38MB, committed to repo; also uploaded to R2 for Cloudflare)
 
 App loading:
     Browser fetches graph.db.gz
@@ -119,13 +119,15 @@ src/
 │   ├── graphAccess.ts    — Shared builder for a graphDb-backed GraphAccess (core/Tier-1).
 │   ├── tieredGraphAccess.ts — Tiered GraphAccess: core sql.js → Postgres → MusicBrainz.
 │   │                       Async prepareArtists() prefetch + sync build() facade. Used by Similarity + Concerts.
+│   ├── searchResolution.ts — Pure logic: resolve an Explore search by MBID (just-clicked node) or by name.
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/
 │   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links.
+│   │                       Inline tabs on desktop; hamburger menu below 640px.
 │   ├── SearchBar.tsx     — Search input, expand, reset, settings. Responsive layout.
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas (solid=expanded, outline=unexpanded).
 │   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) for node details.
-│   ├── Settings.tsx      — API key, Setlist.fm toggle, debug toggle, clear all data.
+│   ├── Settings.tsx      — API key, Setlist.fm toggle, debug toggle, clear all data. Bottom sheet on mobile.
 │   └── DebugConsole.tsx  — Collapsible log console.
 ├── api/
 │   ├── supabase.ts       — Client for Supabase edge functions (venue search, aggregation).
@@ -139,12 +141,15 @@ src/
 ├── test/
 │   ├── setup.ts          — Vitest setup (localStorage shim for Node env).
 │   ├── musicbrainz.integration.test.ts — Regression tests for recurring MB bugs (stubbed fetch).
+│   ├── similarity.test.ts / concerts.test.ts — Scoring and concert-ranking logic.
+│   ├── tieredGraphAccess.test.ts — Tier fallback order, caching, miss recording.
+│   ├── searchResolution.test.ts  — MBID-vs-name search resolution.
 │   └── fixtures/         — Captured MusicBrainz API responses (search-fuzz, artist-arctic-monkeys, etc.).
 ├── App.tsx               — Router (HashRouter, 5 routes: Explore, Play, Discover, Similarity, About).
 ├── main.tsx              — Entry point.
 ├── vite-env.d.ts         — Vite type declarations.
 ├── sql.js.d.ts           — sql.js type declarations.
-└── index.css             — Dark theme, responsive media queries, highlight animation.
+└── index.css             — Dark theme, mobile styles (max-width: 640px block), highlight animation.
 
 scripts/
 ├── process_mb_dump.py    — Downloads MusicBrainz dump, builds browser SQLite graph.
@@ -169,14 +174,19 @@ supabase/
 └── README.md             — Deployment instructions.
 
 docs/
+├── CDN_HOSTING.md        — Hosting graph.db.gz on Cloudflare R2; Cloudflare deploy setup.
 └── SPACE_SAVING.md       — Ideas for reducing database storage if needed.
 
 public/
-├── graph.db.gz           — Precomputed SQLite graph (committed, ~61MB).
+├── graph.db.gz           — Precomputed SQLite graph (committed, ~38MB).
+├── .assetsignore         — Keeps graph.db.gz out of the Cloudflare upload (25 MiB asset cap).
 └── sql-wasm.wasm         — sql.js WASM binary (committed, ~660KB).
 
 .github/workflows/
 └── deploy.yml            — GitHub Actions: build and deploy to GitHub Pages.
+
+wrangler.jsonc            — Cloudflare Workers config (static assets; `previews` block for PR builds).
+CLAUDE.md                 — Instructions for Claude Code sessions (imports this file).
 ```
 
 ## SQLite schema
@@ -207,7 +217,7 @@ CREATE TABLE edges (
 
 ## Key design decisions
 
-- **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~61MB download (gzipped), instant queries.
+- **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~38MB download (gzipped), instant queries.
 - **Gzip auto-detection**: Checks first 2 bytes for gzip magic number (1f 8b). Decompresses manually if browser didn't (GitHub Pages). Skips if Vite already decompressed (Content-Encoding: gzip).
 - **Game restricted to band relationships**: BFS and valid moves only use member_of, former_member_of, support_musician. Album credits stored but not used in gameplay (too complex for players).
 - **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS.
@@ -223,9 +233,9 @@ CREATE TABLE edges (
 - **Vite base (host-aware)**: `vite.config.ts` sets `base` by precedence: explicit `DEPLOY_BASE` env var → Cloudflare build (`WORKERS_CI` from Workers Builds, or `CF_PAGES` from Pages) → `/` → GitHub Pages production default `/MusicSceneMap/` → dev `/`. Cloudflare serves at the domain root, so the GitHub Pages base there causes a blank page (404'd assets) — hence the auto-detection. It also inlines the R2 graph URL on Cloudflare builds (see `__GRAPH_DB_CDN_URL__`), since static-assets-only Workers can't hold env vars.
 - **graph.db.gz loader (local-first, CDN fallback)**: `graphDb.ts` tries the same-origin committed file first, then falls back to the CDN URL (`VITE_GRAPH_DB_URL` or the build-time `__GRAPH_DB_CDN_URL__`) if the local file is missing/HTML-fallback. On Cloudflare the local file is excluded from upload via `public/.assetsignore` (25 MiB asset cap), so it loads from R2.
 - **graph.db.gz committed to repo**: Deployed with the site, same origin = no CORS. Fits GitHub's 100MB file limit. **Cloudflare Pages caps static assets at 25 MiB**, below the file size — to deploy there, host `graph.db.gz` on a CDN and set `VITE_GRAPH_DB_URL` (see `docs/CDN_HOSTING.md`). `graphDb.ts` uses `VITE_GRAPH_DB_URL || same-origin file`. **GitHub Releases was tried and rejected**: release-asset URLs 302-redirect to `objects.githubusercontent.com` without reliable `Access-Control-Allow-Origin`, so cross-origin `fetch` fails CORS. Use Cloudflare R2 (free egress, controllable CORS policy, serves raw gzip bytes so the magic-number decompression path still works) or jsDelivr.
-- **No backend**: Everything client-side. Static file hosting only.
+- **Mostly client-side**: The site is static (GitHub Pages / Cloudflare) and graph queries run in the browser. Network calls are limited to Supabase edge functions (venue search, Tier-2 graph lookups, miss reporting), MusicBrainz (Tier-3 fallback) and Pollstar (concerts).
 - **Game persistence**: 24h in localStorage. New Game clears and regenerates.
-- **Responsive**: Mobile-friendly, bottom sheet InfoPanel, no keyboard on node click.
+- **Responsive**: Phone layouts come from one `@media (max-width: 640px)` block in `index.css` that targets class hooks on components (inline styles stay the desktop default). Below 640px: hamburger nav, one-row Explore toolbar, bottom-sheet InfoPanel and Settings, 44px tap targets, safe-area insets. Tested at 320px and 390px with no horizontal scroll.
 
 ## Running
 
@@ -267,6 +277,8 @@ The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To re
 
 `src/test/similarity.test.ts` unit-tests the Similarity scoring logic (`src/pages/similarity.ts`) against an in-memory fake graph (no sql.js needed). Covers: relationship-weight ordering (member_of > former_member_of > support_musician > album credits), album-credit weighting by shared-credit count with saturation, connection detection (shared bandmates and shared albums), band-tied vs album-only ranking, unreachable artists scoring zero, unknown/not-found artists, breakdown sort order, and the best/average aggregate.
 
+`src/test/tieredGraphAccess.test.ts` covers the tiered fallback (core → Postgres → MusicBrainz), Tier-2 caching, per-session dedupe, and miss recording. `src/test/searchResolution.test.ts` covers Explore's MBID-vs-name search resolution.
+
 `src/test/concerts.test.ts` unit-tests the concert-ranking logic (`src/pages/concerts.ts`) and Pollstar response parsing (`src/api/pollstar.ts`). Covers: headline-artist selection, ranking graph-known artists above unknowns (score 0), tie-break by soonest date, per-artist score memoization, supporting-artist listing, event dedupe, and `parseVenues`/`parseEvents`/`formatPollstarDate` field mapping. All offline (no network).
 
 ## Backend (Supabase)
@@ -284,6 +296,7 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 **Edge Functions** (`supabase/functions/`):
 - `venue-search` — On-demand venue lookup: resolves artist (DB → MusicBrainz fallback), checks cache, fetches Setlist.fm, stores results, detects touring partners. Adds missing artists to DB automatically.
 - `report-miss` — Lightweight POST endpoint for frontend to report artists missing from browser SQLite.
+- `graph-neighbors` — Tier-2 graph lookup: artist + 1-hop neighbors from Postgres for artists missing from the browser SQLite.
 
 **Search miss tracking**:
 - `sqlite-missing` — in Supabase DB but not browser SQLite (frontend reports via report-miss)
@@ -298,9 +311,13 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 
 **Frontend (Cloudflare, Workers Builds)**: Build command `npm run build`, deploy `npx wrangler deploy`, output `dist`. No env vars needed — the build auto-detects Cloudflare (`WORKERS_CI`) to set base `/` and inline the R2 graph URL. `public/.assetsignore` keeps the oversized `graph.db.gz` out of the upload (25 MiB cap); the app loads it from R2. R2 bucket needs public access + a CORS policy allowing the site origins. Full setup in `docs/CDN_HOSTING.md`.
 
-**Edge Functions**:
+**PR previews**: Cloudflare builds every PR branch with `npx wrangler preview` (needs the `previews` block in `wrangler.jsonc`). The `cloudflare-workers-and-pages` bot comments on the PR with the preview URL and build status.
+
+**Edge Functions** (full list in `supabase/README.md`):
 ```bash
-supabase functions deploy venue-search --project-ref lwqkjtzqjgacgvfjiyxg
+supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
+supabase functions deploy report-miss --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
+supabase functions deploy graph-neighbors --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
 
 ## What's missing / next steps

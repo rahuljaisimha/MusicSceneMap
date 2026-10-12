@@ -1,0 +1,17 @@
+{
+  // Cloudflare Workers config (Workers Builds static-assets deploy).
+  //
+  // Why a `previews` block: once production carries any `vars`, `npx wrangler
+  // preview` (run for branch/PR builds) requires a `previews` block. The block
+  // can be empty when Previews need no separate settings (per Cloudflare docs:
+  // workers/previews/configuration). Base path and the R2 graph URL are handled
+  // at BUILD time via WORKERS_CI detection in vite.config.ts, so no vars are
+  // needed here.
+  "name": "musicscenemap",
+  "compatibility_date": "2026-10-06",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "previews": {}
+}

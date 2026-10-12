@@ -2,24 +2,27 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig(({ mode }) => {
+  // Is this a Cloudflare build? Workers Builds sets WORKERS_CI=1; Cloudflare
+  // Pages sets CF_PAGES. Either way, Cloudflare serves at the domain root.
+  const isCloudflareBuild = Boolean(process.env.WORKERS_CI || process.env.CF_PAGES);
+
   // Base path precedence:
   //   1. Explicit DEPLOY_BASE env var (manual override, any host).
-  //   2. Cloudflare build (CF_PAGES is set automatically by Cloudflare) → "/"
-  //      since workers.dev / pages.dev serve at the domain root.
+  //   2. Cloudflare build → "/" (workers.dev / pages.dev serve at root).
   //   3. GitHub Pages production default → "/MusicSceneMap/".
   //   4. Local dev → "/".
   const base =
     process.env.DEPLOY_BASE ??
-    (process.env.CF_PAGES ? "/" : mode === "production" ? "/MusicSceneMap/" : "/");
+    (isCloudflareBuild ? "/" : mode === "production" ? "/MusicSceneMap/" : "/");
 
-  // CDN URL for the graph DB. Cloudflare's Worker (static-assets-only) can't
-  // hold env vars, so we can't rely on VITE_GRAPH_DB_URL being set there.
-  // Instead, default to the R2 URL on Cloudflare builds (CF_PAGES is set during
-  // Workers Builds). An explicit VITE_GRAPH_DB_URL env var still overrides.
+  // CDN URL for the graph DB. Cloudflare's static-assets-only Worker can't hold
+  // env vars, so we can't rely on VITE_GRAPH_DB_URL being set there. Instead,
+  // default to the R2 URL on Cloudflare builds. An explicit VITE_GRAPH_DB_URL
+  // env var still overrides.
   const CLOUDFLARE_R2_GRAPH_URL =
     "https://pub-466afa6f120c41149f30d306dc81a9ee.r2.dev/graph.db.gz";
   const graphDbCdnUrl =
-    process.env.VITE_GRAPH_DB_URL ?? (process.env.CF_PAGES ? CLOUDFLARE_R2_GRAPH_URL : "");
+    process.env.VITE_GRAPH_DB_URL ?? (isCloudflareBuild ? CLOUDFLARE_R2_GRAPH_URL : "");
 
   return {
     plugins: [react()],

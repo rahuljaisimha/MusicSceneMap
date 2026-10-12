@@ -81,9 +81,9 @@ export function SimilarityPage() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
+      <div className="page-container" style={styles.container}>
         <div style={styles.header}>
-          <h1 style={styles.title}>Similarity Score</h1>
+          <h1 className="page-title" style={styles.title}>Similarity Score</h1>
           <p style={styles.subtitle}>
             See how closely an artist fits a group of artists you like, based on
             shared members and connections in the music graph.
@@ -119,7 +119,9 @@ export function SimilarityPage() {
                     <button
                       type="button"
                       onClick={() => handleRemoveArtist(a)}
+                      className="chip-remove"
                       style={styles.chipRemove}
+                      aria-label={`Remove ${a}`}
                     >
                       ×
                     </button>

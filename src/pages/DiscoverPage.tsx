@@ -237,9 +237,9 @@ export function DiscoverPage() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
+      <div className="page-container" style={styles.container}>
         <div style={styles.header}>
-          <h1 style={styles.title}>{mode === "venues" ? "Discover Venues" : "Discover Concerts"}</h1>
+          <h1 className="page-title" style={styles.title}>{mode === "venues" ? "Discover Venues" : "Discover Concerts"}</h1>
           <p style={styles.subtitle}>
             {mode === "venues"
               ? "Find venues in a city based on artists you like."
@@ -304,7 +304,9 @@ export function DiscoverPage() {
                     <button
                       type="button"
                       onClick={() => handleRemoveArtist(a)}
+                      className="chip-remove"
                       style={styles.chipRemove}
+                      aria-label={`Remove ${a}`}
                     >
                       ×
                     </button>

@@ -1,6 +1,6 @@
 export function AboutPage() {
   return (
-    <div style={styles.container}>
+    <div className="page-container" style={styles.container}>
       <div style={styles.content}>
         <h1 style={styles.title}>About MusicSceneMap</h1>
         <p style={styles.paragraph}>

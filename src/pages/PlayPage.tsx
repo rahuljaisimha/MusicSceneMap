@@ -500,9 +500,9 @@ export function PlayPage() {
   return (
     <div style={styles.page}>
       <DebugConsole />
-      <div style={styles.container}>
+      <div className="page-container" style={styles.container}>
         <div style={styles.header}>
-          <h1 style={styles.title}>Six Degrees of Music</h1>
+          <h1 className="page-title" style={styles.title}>Six Degrees of Music</h1>
           <p style={styles.subtitle}>
             Connect these two {state.startArtist?.type === "group" ? "bands" : "artists"} through the shortest path.
           </p>
@@ -524,15 +524,15 @@ export function PlayPage() {
 
         {state.status === "playing" && (
           <>
-            <div style={styles.endpointsCard}>
+            <div className="endpoints-card" style={styles.endpointsCard}>
               <div style={styles.endpoint}>
                 <span style={styles.endpointLabel}>Start</span>
-                <span style={styles.endpointName}>{state.startArtist!.name}</span>
+                <span className="endpoint-name" style={styles.endpointName}>{state.startArtist!.name}</span>
               </div>
               <div style={styles.parBadge}>Par {state.par}</div>
               <div style={styles.endpoint}>
                 <span style={styles.endpointLabel}>End</span>
-                <span style={styles.endpointName}>{state.endArtist!.name}</span>
+                <span className="endpoint-name" style={styles.endpointName}>{state.endArtist!.name}</span>
               </div>
             </div>
 
@@ -567,13 +567,14 @@ export function PlayPage() {
                     aria-label="Filter connections"
                   />
                 </div>
-                <div style={styles.movesList}>
+                <div className="moves-list" style={styles.movesList}>
                   {filteredMoves.length > 0 ? (
                     filteredMoves.map((m) => (
                       <button
                         key={m.id}
                         type="button"
                         onClick={() => handleGuess(m.name)}
+                        className="move-item"
                         style={styles.moveItem}
                       >
                         <span style={styles.moveName}>{m.name}</span>
@@ -623,7 +624,7 @@ export function PlayPage() {
               </div>
             )}
 
-            <div style={styles.gameButtons}>
+            <div className="game-buttons" style={styles.gameButtons}>
               <button onClick={startNewGame} style={styles.newGameBtn}>
                 New Game
               </button>
@@ -716,7 +717,7 @@ const styles: Record<string, React.CSSProperties> = {
   bandChip: { padding: "0.3rem 0.7rem", borderRadius: "12px", fontSize: "0.85rem", background: "rgba(255, 107, 107, 0.15)", color: "#ff6b6b", border: "1px solid #ff6b6b" },
   albumChip: { padding: "0.3rem 0.7rem", borderRadius: "12px", fontSize: "0.85rem", background: "rgba(85, 239, 196, 0.15)", color: "#55efc4", border: "1px solid #55efc4" },
   newGameBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "none", background: "#ff6b6b", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem", marginTop: "0.5rem" },
-  gameButtons: { display: "flex", gap: "0.5rem", marginTop: "0.5rem" },
+  gameButtons: { display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0.5rem", marginTop: "0.5rem" },
   customBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "1px solid #48dbfb", background: "transparent", color: "#48dbfb", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem", marginTop: "0.5rem" },
   shareBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "1px solid #55efc4", background: "transparent", color: "#55efc4", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem", marginTop: "0.5rem" },
   customForm: { display: "flex", flexDirection: "column", gap: "0.5rem", width: "100%", maxWidth: "400px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "1rem" },

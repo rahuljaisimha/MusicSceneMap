@@ -59,6 +59,10 @@ brew install zstd
 python3 scripts/process_mb_dump.py
 ```
 
+## Deploying
+
+The app is a static site, deployable to GitHub Pages or Cloudflare (Workers Builds). On Cloudflare the graph database is served from Cloudflare R2 (the file exceeds the 25 MiB static-asset cap). See [`docs/CDN_HOSTING.md`](docs/CDN_HOSTING.md) for setup.
+
 ## Testing
 
 Unit tests run with [Vitest](https://vitest.dev/):

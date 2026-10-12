@@ -116,8 +116,29 @@ gzip/decompression surprises — commits `a2b9bd0` and `987afac`.)
 ## Refreshing after a graph regen
 
 After re-running `scripts/process_mb_dump.py`, re-upload the new `graph.db.gz`
-to the bucket (overwrite the object). If you use a custom domain with caching,
-purge the cached object so clients fetch the new file.
+to the bucket (overwrite the object). Two npm scripts automate this:
+
+```bash
+npm run upload-graph   # upload existing public/graph.db.gz to R2
+npm run regen-graph    # regenerate the graph, then upload in one step
+```
+
+They wrap:
+
+```
+wrangler r2 object put musicscenemap-graph/graph.db.gz \
+  --file public/graph.db.gz --content-type application/gzip --remote
+```
+
+Notes:
+- `--remote` targets the real R2 bucket (without it, wrangler writes to local
+  simulated storage).
+- Do NOT pass `--content-encoding gzip`. The app relies on R2 returning raw
+  gzip bytes and decompresses via the magic-number check; setting
+  `Content-Encoding` would make the browser pre-decompress and break detection.
+- Requires `wrangler login` (or `CLOUDFLARE_API_TOKEN`) with R2 write access.
+- If you use a custom domain with caching, purge the cached object afterward so
+  clients fetch the new file.
 
 ## Why not GitHub Releases
 

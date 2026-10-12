@@ -39,14 +39,16 @@ export async function getDb(): Promise<DB> {
     //
     // Order of preference:
     //   1. Same-origin committed file (`<base>/graph.db.gz`) — fast, no CORS.
-    //   2. VITE_GRAPH_DB_URL (CDN, e.g. Cloudflare R2) — fallback when the local
-    //      file isn't available (fresh clone without a regen, or a host that
-    //      can't serve the file such as Cloudflare Pages' 25 MiB asset cap).
+    //   2. CDN URL (Cloudflare R2) — fallback when the local file isn't
+    //      available (fresh clone without a regen, or a host that can't serve
+    //      the file such as Cloudflare's 25 MiB asset cap). The CDN URL comes
+    //      from VITE_GRAPH_DB_URL if set, else a build-time default that is the
+    //      R2 URL on Cloudflare builds (see vite.config.ts __GRAPH_DB_CDN_URL__).
     //
     // Locally this means dev uses your generated public/graph.db.gz when present
     // and transparently falls back to the CDN when it isn't.
     const localUrl = `${import.meta.env.BASE_URL}graph.db.gz`;
-    const cdnUrl = import.meta.env.VITE_GRAPH_DB_URL;
+    const cdnUrl = import.meta.env.VITE_GRAPH_DB_URL || __GRAPH_DB_CDN_URL__;
     const candidates = [localUrl, cdnUrl].filter((u): u is string => Boolean(u));
 
     let buffer: ArrayBuffer | null = null;

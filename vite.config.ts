@@ -12,9 +12,22 @@ export default defineConfig(({ mode }) => {
     process.env.DEPLOY_BASE ??
     (process.env.CF_PAGES ? "/" : mode === "production" ? "/MusicSceneMap/" : "/");
 
+  // CDN URL for the graph DB. Cloudflare's Worker (static-assets-only) can't
+  // hold env vars, so we can't rely on VITE_GRAPH_DB_URL being set there.
+  // Instead, default to the R2 URL on Cloudflare builds (CF_PAGES is set during
+  // Workers Builds). An explicit VITE_GRAPH_DB_URL env var still overrides.
+  const CLOUDFLARE_R2_GRAPH_URL =
+    "https://pub-466afa6f120c41149f30d306dc81a9ee.r2.dev/graph.db.gz";
+  const graphDbCdnUrl =
+    process.env.VITE_GRAPH_DB_URL ?? (process.env.CF_PAGES ? CLOUDFLARE_R2_GRAPH_URL : "");
+
   return {
     plugins: [react()],
     base,
+    define: {
+      // Inlined at build; read in src/db/graphDb.ts.
+      __GRAPH_DB_CDN_URL__: JSON.stringify(graphDbCdnUrl),
+    },
     server: {
       proxy: {
         "/setlistfm-api": {

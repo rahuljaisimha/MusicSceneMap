@@ -12,3 +12,9 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/**
+ * Build-time graph DB CDN URL, injected by vite.config.ts `define`.
+ * Empty string when not building for a CDN host (e.g. GitHub Pages / dev).
+ */
+declare const __GRAPH_DB_CDN_URL__: string;

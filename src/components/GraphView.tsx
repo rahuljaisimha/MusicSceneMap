@@ -7,6 +7,9 @@ interface Props {
   onNodeClick: (node: { id?: string | number }) => void;
 }
 
+// Hover tooltips duplicate the canvas label after a tap on touch screens
+const isTouch = typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
+
 export function GraphView({ data, onNodeClick }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -25,7 +28,7 @@ export function GraphView({ data, onNodeClick }: Props) {
       <ForceGraph2D
         ref={graphRef as React.MutableRefObject<ForceGraphMethods | undefined>}
         graphData={data}
-        nodeLabel="name"
+        nodeLabel={isTouch ? "" : "name"}
         nodeColor="color"
         nodeVal="val"
         linkColor="color"

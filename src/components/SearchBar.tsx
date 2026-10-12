@@ -31,7 +31,7 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
   };
 
   return (
-    <form onSubmit={handleSubmit} style={styles.form}>
+    <form onSubmit={handleSubmit} className="search-bar" style={styles.form}>
       <div className="search-group" style={styles.searchGroup}>
         <input
           key={highlightKey}
@@ -39,7 +39,7 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search an artist (e.g. Ty Segall, Osees, King Gizzard)"
+          placeholder="Search an artist (e.g. Ty Segall, Osees)"
           disabled={loading}
           className={highlightKey > 0 ? "search-input-highlight" : ""}
           style={styles.input}
@@ -49,7 +49,7 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
           {loading ? "Loading…" : "Expand"}
         </button>
       </div>
-      <button type="button" onClick={onReset} style={styles.resetBtn} title="Clear graph">
+      <button type="button" onClick={onReset} className="search-reset" style={styles.resetBtn} title="Clear graph">
         Reset
       </button>
       <Settings onKeyChange={() => {}} />

@@ -7,15 +7,13 @@ interface Props {
 }
 
 export function InfoPanel({ node, onClose }: Props) {
-  const isMobile = window.innerWidth < 640;
-
   return (
-    <aside style={isMobile ? styles.panelMobile : styles.panel} aria-label="Node details">
+    <aside className="info-panel" style={styles.panel} aria-label="Node details">
       <div style={styles.header}>
         <span style={{ ...styles.badge, background: NODE_COLORS[node.type] }}>
           {node.type}
         </span>
-        <button onClick={onClose} style={styles.closeBtn} aria-label="Close panel">
+        <button onClick={onClose} className="info-close" style={styles.closeBtn} aria-label="Close panel">
           ×
         </button>
       </div>
@@ -56,18 +54,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#1a1a1a",
     borderLeft: "1px solid #2a2a2a",
     overflowY: "auto",
-  },
-  panelMobile: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    maxHeight: "40vh",
-    padding: "1rem",
-    background: "#1a1a1a",
-    borderTop: "1px solid #2a2a2a",
-    overflowY: "auto",
-    zIndex: 50,
   },
   header: {
     display: "flex",

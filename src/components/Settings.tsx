@@ -39,8 +39,9 @@ export function Settings({ onKeyChange }: Props) {
       >
         ⚙
       </button>
+      {open && <div className="settings-backdrop" style={styles.backdrop} onClick={() => setOpen(false)} />}
       {open && (
-        <div style={styles.dropdown}>
+        <div className="settings-dropdown" style={styles.dropdown}>
           <label style={styles.label}>
             Setlist.fm API Key
             <span style={styles.hint}>
@@ -54,6 +55,7 @@ export function Settings({ onKeyChange }: Props) {
               value={key}
               onChange={(e) => { setKey(e.target.value); setSaved(false); }}
               placeholder="Paste your API key"
+              className="settings-input"
               style={styles.input}
               aria-label="Setlist.fm API key"
             />
@@ -114,6 +116,11 @@ export function Settings({ onKeyChange }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
     position: "relative",
+  },
+  backdrop: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 99,
   },
   toggle: {
     background: "none",

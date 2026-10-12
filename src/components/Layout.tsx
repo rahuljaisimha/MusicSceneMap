@@ -1,28 +1,65 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+
+const NAV_ITEMS = [
+  { to: "/", label: "Explore" },
+  { to: "/play", label: "Play" },
+  { to: "/discover", label: "Discover" },
+  { to: "/similarity", label: "Similarity" },
+  { to: "/about", label: "About" },
+];
 
 export function Layout() {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+  const current = NAV_ITEMS.find((item) => item.to === location.pathname);
+
+  // Close the mobile menu after navigating
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   return (
     <>
-      <nav style={styles.nav}>
-        <span style={styles.brand}>MusicSceneMap</span>
-        <div style={styles.links}>
-          <NavLink to="/" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
-            Explore
-          </NavLink>
-          <NavLink to="/play" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
-            Play
-          </NavLink>
-          <NavLink to="/discover" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
-            Discover
-          </NavLink>
-          <NavLink to="/similarity" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
-            Similarity
-          </NavLink>
-          <NavLink to="/about" style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}>
-            About
-          </NavLink>
+      <nav className="app-nav" style={styles.nav}>
+        <span className="nav-brand" style={styles.brand}>MusicSceneMap</span>
+        {/* Mobile only (see index.css): current tab + hamburger toggle */}
+        {current && <span className="nav-current" style={styles.current}>{current.label}</span>}
+        <button
+          type="button"
+          className="nav-toggle"
+          style={styles.toggle}
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          aria-controls="nav-links"
+        >
+          {menuOpen ? "✕" : "☰"}
+        </button>
+        <div id="nav-links" className={`nav-links${menuOpen ? " open" : ""}`} style={styles.links}>
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              className="nav-link"
+              to={item.to}
+              style={({ isActive }) => ({ ...styles.link, ...(isActive ? styles.activeLink : {}) })}
+            >
+              {item.label}
+            </NavLink>
+          ))}
         </div>
       </nav>
+      {menuOpen && <div className="nav-backdrop" style={styles.backdrop} onClick={() => setMenuOpen(false)} />}
       <Outlet />
     </>
   );
@@ -36,12 +73,32 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "0.5rem 0.75rem",
     background: "#1a1a1a",
     borderBottom: "1px solid #2a2a2a",
+    position: "relative",
+    zIndex: 200,
   },
   brand: {
     fontWeight: 700,
     fontSize: "1.1rem",
     color: "#ff6b6b",
     marginRight: "auto",
+  },
+  current: {
+    display: "none",
+    color: "#e0e0e0",
+    fontSize: "0.9rem",
+    fontWeight: 500,
+  },
+  toggle: {
+    display: "none",
+    background: "none",
+    border: "none",
+    color: "#e0e0e0",
+    fontSize: "1.3rem",
+    lineHeight: 1,
+    cursor: "pointer",
+    minWidth: "44px",
+    minHeight: "44px",
+    margin: "-0.5rem -0.5rem -0.5rem 0",
   },
   links: {
     display: "flex",
@@ -59,5 +116,11 @@ const styles: Record<string, React.CSSProperties> = {
   activeLink: {
     color: "#e0e0e0",
     background: "#2a2a2a",
+  },
+  backdrop: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0, 0, 0, 0.5)",
+    zIndex: 150,
   },
 };

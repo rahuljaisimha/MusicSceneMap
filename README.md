@@ -45,6 +45,8 @@ A game that gives you two musicians (or two bands) and challenges you to find th
 
 Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related bands for richer recommendations. Powered by Setlist.fm data, cached in a backend database.
 
+Tap **Add my Spotify top artists** to fill the list from your Spotify listening (also on Similarity).
+
 Switch to **Concerts** to see upcoming shows at the city's top venues (from Pollstar), ranked by how well each headliner fits the artists you listed.
 
 ## Similarity

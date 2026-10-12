@@ -31,7 +31,7 @@ or:
 
 # Current Implementation
 
-The project currently has two working features, powered by a precomputed SQLite database (built from MusicBrainz data dumps) queried directly in the browser via WebAssembly:
+The app has four features, powered by a precomputed SQLite database (built from MusicBrainz data dumps) queried directly in the browser via WebAssembly. It works on desktop and phones.
 
 ## Explore
 
@@ -44,6 +44,12 @@ A game that gives you two musicians (or two bands) and challenges you to find th
 ## Discover
 
 Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related bands for richer recommendations. Powered by Setlist.fm data, cached in a backend database.
+
+Switch to **Concerts** to see upcoming shows at the city's top venues (from Pollstar), ranked by how well each headliner fits the artists you listed.
+
+## Similarity
+
+Score how closely an artist fits a group of artists you like, from 0 to 100, based on shared band members, collaborations and other connections in the music graph. Artists missing from the built-in graph are looked up from the backend database and MusicBrainz.
 
 ## Running
 
@@ -63,6 +69,10 @@ python3 scripts/process_mb_dump.py
 
 The app is a static site, deployable to GitHub Pages or Cloudflare (Workers Builds). On Cloudflare the graph database is served from Cloudflare R2 (the file exceeds the 25 MiB static-asset cap). See [`docs/CDN_HOSTING.md`](docs/CDN_HOSTING.md) for setup.
 
+## Contributing
+
+Changes go through pull requests into `main`, one squashed commit per PR. Cloudflare builds a preview of every PR; the Cloudflare bot posts the preview link as a comment on the PR. See [`CLAUDE.md`](CLAUDE.md) for the full workflow and [`SUMMARY.md`](SUMMARY.md) for the architecture.
+
 ## Testing
 
 Unit tests run with [Vitest](https://vitest.dev/):
@@ -72,7 +82,7 @@ npm test          # run all tests once
 npm run test:watch  # re-run on file changes
 ```
 
-The tests are integration-style checks against real MusicBrainz API responses (captured as fixtures in `src/test/fixtures/`, with `fetch` stubbed so tests are offline and deterministic). They lock in specific edge cases that caused repeated bugs — e.g. searching "Fuzz" returning "Buzz Fuzz", multiple artists named "Jack White", and current-vs-former band member deduplication. To refresh a fixture, re-capture the response from the MusicBrainz API for the relevant MBID.
+The tests cover the Similarity scoring, concert ranking, tiered graph lookups and search resolution, plus integration-style checks against real MusicBrainz API responses (captured as fixtures in `src/test/fixtures/`, with `fetch` stubbed so tests are offline and deterministic). They lock in specific edge cases that caused repeated bugs — e.g. searching "Fuzz" returning "Buzz Fuzz", multiple artists named "Jack White", and current-vs-former band member deduplication. To refresh a fixture, re-capture the response from the MusicBrainz API for the relevant MBID.
 
 ---
 
@@ -336,6 +346,8 @@ Possible sources:
 ---
 
 # Potential Technology Stack
+
+These were the options considered at the start of the project. The current build uses Vite, React and TypeScript, SQLite in the browser (sql.js), Supabase (Postgres and edge functions), and Cloudflare R2 for hosting the graph. See [`SUMMARY.md`](SUMMARY.md) for details.
 
 ## Frontend
 

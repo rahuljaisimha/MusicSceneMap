@@ -511,7 +511,7 @@ export function PlayPage() {
         {state.status === "loading" && (
           <div style={styles.card}>
             <p style={styles.loadingText}>Loading database…</p>
-            <p style={styles.hint}>First load downloads ~50MB graph</p>
+            <p style={styles.hint}>The game needs the full graph (~38MB). It downloads once, in the background.</p>
           </div>
         )}
 

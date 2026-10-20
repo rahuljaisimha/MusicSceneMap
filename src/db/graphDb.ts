@@ -94,7 +94,22 @@ export async function getDb(): Promise<DB> {
     return db;
   })();
 
+  // Let a later call retry after a failed download instead of reusing the rejection.
+  loadingPromise.catch(() => {
+    loadingPromise = null;
+  });
+
   return loadingPromise;
+}
+
+/**
+ * Start downloading the graph in the background without blocking anything.
+ * Until it finishes, src/db/graphSource.ts answers lookups from Postgres.
+ */
+export function preloadDb(): void {
+  getDb().catch(() => {
+    /* lookups keep using the server; the next getDb() call retries */
+  });
 }
 
 /**

@@ -171,11 +171,18 @@ export class TieredGraphAccess {
  */
 export async function buildTieredGraphAccess(): Promise<TieredGraphAccess> {
   const { buildGraphAccess } = await import("./graphAccess");
-  const core = await buildGraphAccess();
+  const { isDbLoaded } = await import("../db/graphDb");
+  // Core returns nothing until the background graph download finishes, so
+  // lookups go to Postgres meanwhile.
+  const core = buildGraphAccess();
 
   const fetchPostgres = async (name: string): Promise<Subgraph | null> => {
+    // While the local graph is still downloading, a miss here says nothing
+    // about SQLite coverage, so don't record it in search_misses. Read before
+    // any await: this runs in the same tick as the core-graph check.
+    const logMiss = isDbLoaded();
     const { getGraphNeighbors } = await import("../api/supabase");
-    const res = await getGraphNeighbors({ name });
+    const res = await getGraphNeighbors({ name }, { logMiss });
     if (!res.found || !res.artist) return null;
     return {
       node: res.artist,

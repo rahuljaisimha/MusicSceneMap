@@ -34,16 +34,20 @@ export interface GraphNeighborsResponse {
 
 /**
  * Tier-2 graph lookup: resolve an artist and its 1-hop neighbors from Postgres.
- * Used as a fallback when an artist isn't in the browser's core SQLite graph.
- * Pass either an mbid (preferred) or a name.
+ * Used as a fallback when an artist isn't in the browser's core SQLite graph,
+ * and for every lookup while that graph is still downloading.
+ * Pass either an mbid (preferred) or a name. `logMiss: false` stops the edge
+ * function recording a not-found artist in search_misses.
  */
 export async function getGraphNeighbors(
-  params: { mbid?: string; name?: string }
+  params: { mbid?: string; name?: string },
+  options: { logMiss?: boolean } = {}
 ): Promise<GraphNeighborsResponse> {
   const qs = new URLSearchParams();
   if (params.mbid) qs.set("mbid", params.mbid);
   else if (params.name) qs.set("name", params.name);
   else throw new Error("getGraphNeighbors requires mbid or name");
+  if (options.logMiss === false) qs.set("log", "0");
 
   const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/graph-neighbors?${qs}`);
   if (!response.ok) {

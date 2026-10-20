@@ -53,21 +53,23 @@ export function DiscoverPage() {
       setResults(directResults);
       setLoading(false);
 
-      // Phase 2: Find connected bands via BFS in SQLite (no hop limit, cap at 15 groups)
-      const { getDb, findNodeByName, getNeighbors } = await import("../db/graphDb");
+      // Phase 2: Find connected bands via BFS over the graph. Doesn't wait for
+      // the graph download: until it's loaded, graphSource asks the server.
+      const { isDbLoaded } = await import("../db/graphDb");
+      const { findArtist, getArtistNeighbors } = await import("../db/graphSource");
       const { reportMiss } = await import("../api/supabase");
-      try {
-        await getDb();
-      } catch {
-        return;
-      }
 
-      // Report artists missing from SQLite (for future SQLite updates)
-      for (const artist of artists) {
-        const node = findNodeByName(artist);
-        if (!node) {
-          reportMiss(artist, "sqlite-missing");
-        }
+      // Captured before the lookups: if they went to the server, their misses
+      // say nothing about SQLite coverage, even if the download finishes meanwhile.
+      const lookedUpLocally = isDbLoaded();
+      const startNodes = await Promise.all(artists.map((artist) => findArtist(artist).catch(() => null)));
+
+      // Report artists missing from SQLite (for future SQLite updates). Only
+      // when checked against the local graph; skipped while it's downloading.
+      if (lookedUpLocally) {
+        artists.forEach((artist, i) => {
+          if (!startNodes[i]) reportMiss(artist, "sqlite-missing");
+        });
       }
 
       const connectedBands: Array<{ name: string; mbid: string }> = [];
@@ -75,18 +77,21 @@ export function DiscoverPage() {
       const queue: string[] = [];
 
       // Start BFS from user's artists
-      for (const artist of artists) {
-        const node = findNodeByName(artist);
+      for (const node of startNodes) {
         if (node && !visited.has(node.id)) {
           visited.add(node.id);
           queue.push(node.id);
         }
       }
 
-      // BFS until we find 5 groups
+      // BFS until we find 5 groups. While the graph is still downloading each
+      // step is a server request, so cap how many nodes those expand.
+      const MAX_REMOTE_EXPANSIONS = 30;
+      let remoteExpansions = 0;
       while (queue.length > 0 && connectedBands.length < 5) {
+        if (!isDbLoaded() && remoteExpansions++ >= MAX_REMOTE_EXPANSIONS) break;
         const nodeId = queue.shift()!;
-        const neighbors = getNeighbors(nodeId);
+        const neighbors = await getArtistNeighbors(nodeId).catch(() => []);
 
         for (const { node: neighbor, relType } of neighbors) {
           if (visited.has(neighbor.id)) continue;

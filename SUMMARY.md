@@ -27,11 +27,18 @@ Data pipeline (offline, run manually):
         → SQLite database: nodes (persons, groups, albums) + edges
         → Output: public/graph.db.gz (~38MB, committed to repo; also uploaded to R2 for Cloudflare)
 
-App loading:
-    Browser fetches graph.db.gz
+App loading (lazy, non-blocking):
+    UI renders immediately; main.tsx calls preloadDb() once the browser is idle
+        → Browser fetches graph.db.gz in the background
         → Auto-detects gzip (magic number 1f8b) and decompresses if needed
         → sql.js opens the SQLite database in WASM
-        → All queries are local, instant (<50ms)
+        → From then on queries are local, instant (<50ms)
+    Until it has loaded, lookups go to Postgres instead (same dataset):
+        → src/db/graphSource.ts: findArtist / findArtistById / getArtistNeighbors
+          call the graph-neighbors edge function with log=0 (no search_misses rows)
+        → Explore search, Discover's related-band BFS, Similarity and Concerts
+          (via tieredGraphAccess) all work while the download is in progress
+        → Play still waits: game generation needs BFS over the whole graph
 
 Explore mode:
     User searches artist
@@ -103,9 +110,12 @@ Spotify import (Discover + Similarity artist lists):
 ```
 src/
 ├── db/
-│   └── graphDb.ts        — sql.js wrapper: load DB, BFS (with rel_type filter), neighbor queries, search.
-│                           Runtime compilation filter (>25 degree albums skipped).
-│                           Auto-detects gzip and decompresses if browser didn't.
+│   ├── graphDb.ts        — sql.js wrapper: load DB, BFS (with rel_type filter), neighbor queries, search.
+│   │                       Runtime compilation filter (>25 degree albums skipped).
+│   │                       Auto-detects gzip and decompresses if browser didn't.
+│   │                       preloadDb() starts the background download; a failed load can be retried.
+│   └── graphSource.ts    — Async artist lookups: local graph once loaded, else Postgres graph-neighbors
+│                           (log=0, memoized). Used by Explore and Discover.
 ├── game/
 │   └── artists.ts        — Curated list of ~145 recognizable seed artists (97 persons, 48 groups).
 ├── graph/
@@ -128,6 +138,7 @@ src/
 │   ├── concerts.ts       — Pure concert-ranking logic: flatten Pollstar events, score headline artist
 │   │                       via similarity.ts, sort by score then date. Memoizes per-artist scores.
 │   ├── graphAccess.ts    — Shared builder for a graphDb-backed GraphAccess (core/Tier-1).
+│   │                       Doesn't wait for the download; returns nothing until the DB has loaded.
 │   ├── tieredGraphAccess.ts — Tiered GraphAccess: core sql.js → Postgres → MusicBrainz.
 │   │                       Async prepareArtists() prefetch + sync build() facade. Used by Similarity + Concerts.
 │   ├── searchResolution.ts — Pure logic: resolve an Explore search by MBID (just-clicked node) or by name.
@@ -233,6 +244,7 @@ CREATE TABLE edges (
 ## Key design decisions
 
 - **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~38MB download (gzipped), instant queries.
+- **Lazy graph loading**: Pages never wait for the graph download. It starts in the background after the first render (`preloadDb()` in `main.tsx`), and until it finishes `graphSource.ts` and the tiered access answer from Postgres `graph-neighbors`, which holds the same dataset. Those requests pass `log=0`, and Discover's `sqlite-missing` report only runs when the lookup was checked against the local graph, so nothing is added to `search_misses` while the graph is downloading. Postgres only returns 1-hop neighborhoods, so Similarity scores computed before the download finishes can be less precise. Play is the exception: generating a game needs BFS over the whole graph, so its game card still waits.
 - **Gzip auto-detection**: Checks first 2 bytes for gzip magic number (1f 8b). Decompresses manually if browser didn't (GitHub Pages). Skips if Vite already decompressed (Content-Encoding: gzip).
 - **Game restricted to band relationships**: BFS and valid moves only use member_of, former_member_of, support_musician. Album credits stored but not used in gameplay (too complex for players).
 - **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS.
@@ -312,7 +324,7 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 **Edge Functions** (`supabase/functions/`):
 - `venue-search` — On-demand venue lookup: resolves artist (DB → MusicBrainz fallback), checks cache, fetches Setlist.fm, stores results, detects touring partners. Adds missing artists to DB automatically.
 - `report-miss` — Lightweight POST endpoint for frontend to report artists missing from browser SQLite.
-- `graph-neighbors` — Tier-2 graph lookup: artist + 1-hop neighbors from Postgres for artists missing from the browser SQLite.
+- `graph-neighbors` — Tier-2 graph lookup: artist + 1-hop neighbors from Postgres for artists missing from the browser SQLite, and for every lookup while that graph is still downloading. `log=0` skips the miss log.
 
 **Search miss tracking**:
 - `sqlite-missing` — in Supabase DB but not browser SQLite (frontend reports via report-miss)

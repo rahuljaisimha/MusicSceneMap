@@ -4,9 +4,10 @@ import { GraphView } from "../components/GraphView";
 import { InfoPanel } from "../components/InfoPanel";
 import { DebugConsole } from "../components/DebugConsole";
 import { SceneGraph } from "../graph/SceneGraph";
-import { getDb, findNodeByName, findNodeById, getNeighbors, searchNodes, isDbLoaded } from "../db/graphDb";
+import { getDb, isDbLoaded } from "../db/graphDb";
+import { findArtist, findArtistById, getArtistNeighbors } from "../db/graphSource";
 import { debugLog } from "../debug/DebugLog";
-import { resolveSearchTarget } from "./searchResolution";
+import { resolveSearchTarget, type SearchResolution } from "./searchResolution";
 import type { GraphNode, NodeType, EdgeType } from "../graph/types";
 
 /** Map SQLite node types to our graph node types */
@@ -37,32 +38,17 @@ function mapEdgeType(dbRelType: string): EdgeType {
 }
 
 /**
- * Expand an artist from the SQLite database into the SceneGraph.
- * Only allows person/group nodes — skips albums.
+ * Expand an artist into the SceneGraph. Resolves by exact MBID when the user
+ * clicked a node (avoids name ambiguity, e.g. two artists both named "Fuzz"),
+ * else by name. Only person/group nodes — albums are skipped. Works before the
+ * graph DB has downloaded (graphSource falls back to the server).
  */
-function expandFromDb(name: string, graph: SceneGraph): boolean {
-  const node = findNodeByName(name);
-  if (!node) {
-    // Try partial match, but only persons/groups
-    const results = searchNodes(name, 10).filter((n) => n.type !== "album");
-    if (results.length === 0) return false;
-    return expandNodeById(results[0]!.id, results[0]!.name, results[0]!.type, graph);
-  }
-  if (node.type === "album") return false;
-  return expandNodeById(node.id, node.name, node.type, graph);
-}
-
-/**
- * Expand a node by its exact MBID (used when the user clicked a node in the
- * graph — avoids name ambiguity, e.g. two artists both named "Fuzz").
- */
-function expandFromDbById(id: string, graph: SceneGraph): boolean {
-  const node = findNodeById(id);
-  if (!node || node.type === "album") return false;
-  return expandNodeById(node.id, node.name, node.type, graph);
-}
-
-function expandNodeById(id: string, name: string, type: string, graph: SceneGraph): boolean {
+async function expandArtist(target: SearchResolution, graph: SceneGraph): Promise<boolean> {
+  const node = target.by === "id"
+    ? await findArtistById(target.id)
+    : await findArtist(target.name, { partial: true });
+  if (!node) return false;
+  const { id, name, type } = node;
   const nodeType = mapNodeType(type);
 
   // Add the central node
@@ -74,7 +60,7 @@ function expandNodeById(id: string, name: string, type: string, graph: SceneGrap
   graph.markExpanded(id);
 
   // Get all neighbors (skip album nodes — only show artists/bands)
-  const neighbors = getNeighbors(id);
+  const neighbors = await getArtistNeighbors(id);
   const filtered = neighbors.filter((n) => n.node.type !== "album");
   debugLog.log(`Expanding "${name}": found ${filtered.length} connections (${neighbors.length - filtered.length} albums hidden)`);
 
@@ -115,11 +101,11 @@ export function ExplorePage() {
   // resolve by ID instead of by ambiguous name (e.g. two artists named "Fuzz").
   const pendingNode = useRef<{ name: string; id: string } | null>(null);
 
-  // Load the database on mount
+  // The graph downloads in the background (main.tsx); search works meanwhile.
   useEffect(() => {
     if (!dbReady) {
-      getDb().then(() => setDbReady(true)).catch((e) => {
-        setError(`Failed to load database: ${e instanceof Error ? e.message : "unknown"}`);
+      getDb().then(() => setDbReady(true)).catch(() => {
+        /* searches keep using the server */
       });
     }
   }, [dbReady]);
@@ -129,17 +115,12 @@ export function ExplorePage() {
       setLoading(true);
       setError(null);
       try {
-        if (!isDbLoaded()) {
-          await getDb();
-        }
         // Resolve by exact MBID if the query matches the last-clicked node, else by name
         const resolution = resolveSearchTarget(artistName, pendingNode.current);
-        const found = resolution.by === "id"
-          ? expandFromDbById(resolution.id, graph)
-          : expandFromDb(resolution.name, graph);
+        const found = await expandArtist(resolution, graph);
         pendingNode.current = null;
         if (!found) {
-          setError(`No artist found for "${artistName}" in the database`);
+          setError(`No artist found for "${artistName}"`);
         } else {
           graph.save();
           setGraphData(graph.toForceGraphData());
@@ -178,9 +159,9 @@ export function ExplorePage() {
 
   return (
     <>
-      <SearchBar onSearch={handleSearch} loading={loading || !dbReady} prefill={prefill} onPrefillConsumed={() => setPrefill(null)} onReset={handleReset} />
+      <SearchBar onSearch={handleSearch} loading={loading} prefill={prefill} onPrefillConsumed={() => setPrefill(null)} onReset={handleReset} />
       <DebugConsole />
-      {!dbReady && <div style={{ color: "#888", padding: "0.5rem 1rem" }}>Loading graph database…</div>}
+      {!dbReady && <div style={{ color: "#888", padding: "0.5rem 1rem", fontSize: "0.85rem" }}>Loading the full graph in the background. Searches use the server until it's ready.</div>}
       {error && <div style={{ color: "#ff6b6b", padding: "0.5rem 1rem" }}>{error}</div>}
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <GraphView data={graphData} onNodeClick={handleNodeClick} />

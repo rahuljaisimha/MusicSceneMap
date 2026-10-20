@@ -13,6 +13,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
  * Query params:
  *   - mbid:  artist MBID (preferred, unambiguous), OR
  *   - name:  artist name (case-insensitive; exact match preferred)
+ *   - log:   "0" to skip logging a miss (used while the browser graph is still
+ *            downloading, when a miss says nothing about SQLite coverage)
  *
  * Response:
  *   { found: boolean,
@@ -62,6 +64,7 @@ serve(async (req) => {
     const url = new URL(req.url);
     const mbid = url.searchParams.get("mbid");
     const name = url.searchParams.get("name");
+    const logMiss = url.searchParams.get("log") !== "0";
 
     if (!mbid && !name) {
       return json({ error: "Missing 'mbid' or 'name' parameter" }, 400);
@@ -89,10 +92,12 @@ serve(async (req) => {
 
     if (!artist) {
       // Log the miss so we can track missing coverage.
-      await supabase.from("search_misses").insert({
-        query: mbid ?? name ?? "",
-        source: "graph-neighbors-not-found",
-      });
+      if (logMiss) {
+        await supabase.from("search_misses").insert({
+          query: mbid ?? name ?? "",
+          source: "graph-neighbors-not-found",
+        });
+      }
       return json({ found: false, artist: null, neighbors: [] });
     }
 

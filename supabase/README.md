@@ -110,6 +110,7 @@ GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/graph-neighbors
 |---|---|---|
 | `mbid` | One of these | Artist MBID (preferred, unambiguous) |
 | `name` | One of these | Artist name (case-insensitive, exact match preferred) |
+| `log` | No | `0` skips logging a miss. The app sends it for lookups made while the browser graph is still downloading. |
 
 ### Response
 
@@ -123,7 +124,9 @@ GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/graph-neighbors
 }
 ```
 
-Misses are logged to `search_misses` with source `graph-neighbors-not-found`.
+Misses are logged to `search_misses` with source `graph-neighbors-not-found`, unless `log=0` is passed.
+
+Besides the Tier-2 fallback, the app calls this for every artist lookup while the ~38MB browser graph is still downloading (see `src/db/graphSource.ts`), always with `log=0`.
 
 > Note: Postgres is currently seeded with the SAME BFS-filtered universe as the SQLite graph (`seed_supabase.py`), so today it rarely has coverage the core graph lacks. It becomes the meaningful Tier-2 source once re-seeded with a larger universe. Until then MusicBrainz (Tier 3) does the real coverage lifting.
 

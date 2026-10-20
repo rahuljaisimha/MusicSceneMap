@@ -5,14 +5,16 @@
  *
  * Uses ALL relationships (band memberships, support roles, album credits) so the
  * scorer can weight each connection by type.
+ *
+ * Doesn't wait for the graph download: until the DB has loaded, every lookup
+ * returns nothing, so the tiered access resolves artists from Postgres instead.
+ * Lookups switch to the local graph as soon as it's ready.
  */
 
 import type { GraphAccess, SimNode, SimNeighbor } from "./similarity";
+import { findNodeByName, getNeighbors } from "../db/graphDb";
 
-export async function buildGraphAccess(): Promise<GraphAccess> {
-  const { getDb, findNodeByName, getNeighbors } = await import("../db/graphDb");
-  await getDb();
-
+export function buildGraphAccess(): GraphAccess {
   return {
     findNodeByName(name: string): SimNode | null {
       const node = findNodeByName(name);

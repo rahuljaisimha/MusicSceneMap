@@ -37,6 +37,8 @@ The app has four features, powered by a precomputed SQLite database (built from 
 
 Search for any artist or band and visualize their network — band members, side projects, and supporting musicians rendered as an interactive force-directed graph. Click nodes to explore further.
 
+As you type, a dropdown suggests matching artists from the app's database. Each one is labelled the way MusicBrainz does it, with a note in parentheses (its disambiguation and city), e.g. **Fuzz** (US garage rock band · San Francisco), so you can pick the right one when several artists share a name. Artists the database doesn't have are looked up on MusicBrainz. The same dropdown is on Discover, Similarity and the custom game in Play.
+
 ## Six Degrees of Music (Game)
 
 A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships and supporting roles. Navigate by selecting from valid connections at each step. The app computes the shortest path and shows you a "par" to beat.
@@ -84,7 +86,7 @@ npm test          # run all tests once
 npm run test:watch  # re-run on file changes
 ```
 
-The tests cover the Similarity scoring, concert ranking, tiered graph lookups and search resolution, plus integration-style checks against real MusicBrainz API responses (captured as fixtures in `src/test/fixtures/`, with `fetch` stubbed so tests are offline and deterministic). They lock in specific edge cases that caused repeated bugs — e.g. searching "Fuzz" returning "Buzz Fuzz", multiple artists named "Jack White", and current-vs-former band member deduplication. To refresh a fixture, re-capture the response from the MusicBrainz API for the relevant MBID.
+The tests cover the Similarity scoring, concert ranking, tiered graph lookups, search resolution and artist-dropdown labels, plus integration-style checks against real MusicBrainz API responses (captured as fixtures in `src/test/fixtures/`, with `fetch` stubbed so tests are offline and deterministic). They lock in specific edge cases that caused repeated bugs — e.g. searching "Fuzz" returning "Buzz Fuzz", multiple artists named "Jack White", and current-vs-former band member deduplication. To refresh a fixture, re-capture the response from the MusicBrainz API for the relevant MBID.
 
 ---
 

@@ -128,6 +128,25 @@ Misses are logged to `search_misses` with source `graph-neighbors-not-found`, un
 
 Besides the Tier-2 fallback, the app calls this for every artist lookup while the ~38MB browser graph is still downloading (see `src/db/graphSource.ts`), always with `log=0`.
 
+### Search mode (artist dropdowns)
+
+```
+GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/graph-neighbors?q=fuzz&limit=8
+```
+
+| Param | Required | Description |
+|---|---|---|
+| `q` | Yes | Typed text, at least 2 characters (shorter returns no artists) |
+| `limit` | No | Max results, default 8, max 25 |
+
+```json
+{ "artists": [
+  { "id": "<mbid>", "name": "Fuzz", "type": "group", "disambiguation": "US garage rock band", "area": "San Francisco" }
+] }
+```
+
+Ranked: exact name, names starting with `q`, names with a word starting with `q`, other substring matches; shorter names first. No neighbors, and never writes to `search_misses`. `area` is null until migration 004 has run and `seed_supabase.py` has been re-run. The app asks MusicBrainz only when this returns nothing or fails (see `src/db/artistSuggest.ts`).
+
 > Note: Postgres is currently seeded with the SAME BFS-filtered universe as the SQLite graph (`seed_supabase.py`), so today it rarely has coverage the core graph lacks. It becomes the meaningful Tier-2 source once re-seeded with a larger universe. Until then MusicBrainz (Tier 3) does the real coverage lifting.
 
 ---
@@ -157,3 +176,4 @@ Run in the Supabase SQL Editor (Dashboard → SQL Editor):
 1. `migrations/001_schema.sql` — artists, albums, venues, relationships tables
 2. `migrations/002_crawl_log.sql` — crawl freshness tracking
 3. `migrations/003_search_misses.sql` — logging unknown artist queries
+4. `migrations/004_artist_search.sql` — trigram index for `graph-neighbors` search mode, `artists.area` (re-run `seed_supabase.py` after it to fill `area`)

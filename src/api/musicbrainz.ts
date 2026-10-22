@@ -31,7 +31,10 @@ async function mbFetch<T>(path: string, params: Record<string, string> = {}): Pr
     url.searchParams.set(key, value);
   }
 
-  const response = await fetch(url.toString(), {
+  // Browsers send their own User-Agent; setting one is a non-safelisted
+  // header that forces a CORS preflight, which can fail. fmt=json covers Accept.
+  const isBrowser = typeof window !== "undefined";
+  const response = await fetch(url.toString(), isBrowser ? {} : {
     headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
   });
 
@@ -55,6 +58,9 @@ export interface MBArtist {
   disambiguation?: string;
   country?: string;
   "life-span"?: { begin?: string; end?: string; ended?: boolean };
+  area?: { name: string };
+  "begin-area"?: { name: string };
+  tags?: Array<{ name: string; count: number }>;
   relations?: MBRelation[];
 }
 
@@ -86,6 +92,28 @@ export async function searchArtists(query: string, limit = 10): Promise<MBArtist
     debugLog.log(`MusicBrainz returned ${result.artists.length} results for "${query}"`);
     return result.artists;
   });
+}
+
+/** Escape Lucene query syntax so user input is matched literally. */
+function escapeLucene(term: string): string {
+  return term.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
+}
+
+/**
+ * Search-as-you-type query: the last word is a prefix ("ty seg" matches
+ * "Ty Segall"), the full phrase is boosted. Results include disambiguation,
+ * area, begin-area and tags, which label the artist dropdown.
+ */
+export async function searchArtistsPrefix(query: string, limit = 15): Promise<MBArtist[]> {
+  const words = query.trim().split(/\s+/).filter(Boolean).map(escapeLucene);
+  if (words.length === 0) return [];
+  const phrase = `"${words.join(" ")}"`;
+  const prefix = words.map((w, i) => (i === words.length - 1 ? `${w}*` : w)).join(" AND ");
+  const result = await mbFetch<MBArtistSearchResult>("/artist", {
+    query: `artist:${phrase}^3 OR artist:(${prefix}) OR alias:(${prefix})`,
+    limit: limit.toString(),
+  });
+  return result.artists;
 }
 
 /**

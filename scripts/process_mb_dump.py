@@ -98,6 +98,7 @@ def download_dump_tables(dump_url: str):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     tables_needed = [
+        "mbdump/area",
         "mbdump/artist",
         "mbdump/artist_credit_name",
         "mbdump/l_artist_artist",
@@ -216,8 +217,26 @@ def parse_links(data_dir: Path) -> dict[int, tuple[int, bool]]:
     return links
 
 
-def parse_artists(data_dir: Path) -> dict[int, dict]:
-    """Parse artist table. Returns dict of artist_id → {name, type, gid}."""
+def parse_areas(data_dir: Path) -> dict[int, str]:
+    """Parse area table (countries, cities, ...). Returns dict of area_id → name."""
+    areas = {}
+    with open(data_dir / "mbdump" / "area", "r", encoding="utf-8") as f:
+        for line in f:
+            # Columns: id, gid, name, type, ...
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 3:
+                areas[int(parts[0])] = parts[2]
+    print(f"  Found {len(areas)} areas")
+    return areas
+
+
+def parse_artists(data_dir: Path, areas: dict[int, str]) -> dict[int, dict]:
+    """
+    Parse artist table. Returns dict of artist_id → {name, type, gid,
+    disambiguation, area}. `area` is the begin area (usually a city: where a
+    band formed or a person was born), else the artist's area (often a country).
+    Both label artists in the app's search dropdowns.
+    """
     artists = {}
     artist_file = data_dir / "mbdump" / "artist"
 
@@ -237,11 +256,20 @@ def parse_artists(data_dir: Path) -> dict[int, dict]:
                 name = parts[2]
                 # Type: 1=Person, 2=Group, 3=Orchestra, 4=Choir, 5=Character, 6=Other
                 artist_type = parts[10] if len(parts) > 10 and parts[10] != "\\N" else None
+                comment = parts[13] if len(parts) > 13 and parts[13] != "\\N" else ""
+                area_name = None
+                for idx in (17, 11):  # begin_area, then area
+                    if len(parts) > idx and parts[idx] != "\\N":
+                        area_name = areas.get(int(parts[idx]))
+                        if area_name:
+                            break
 
                 artists[artist_id] = {
                     "name": name,
                     "gid": gid,
                     "type": artist_type,
+                    "disambiguation": comment or None,
+                    "area": area_name,
                 }
 
     print(f"  Found {len(artists)} artists")
@@ -664,8 +692,9 @@ def build_graph(
     which removes high-degree album nodes and shrinks the file.
 
     Schema:
-        nodes(id TEXT PRIMARY KEY, name TEXT, type TEXT)
+        nodes(id TEXT PRIMARY KEY, name TEXT, type TEXT, disambiguation TEXT, area TEXT)
             type: "person", "group"
+            disambiguation/area: NULL when MusicBrainz has none
         edges(source TEXT, target TEXT, rel_type TEXT)
             rel_type: "member_of", "former_member_of", "support_musician", "collaborator"
         + indexes
@@ -705,7 +734,9 @@ def build_graph(
         CREATE TABLE nodes (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            type TEXT NOT NULL
+            type TEXT NOT NULL,
+            disambiguation TEXT,
+            area TEXT
         )
     """)
 
@@ -723,7 +754,10 @@ def build_graph(
         if data["gid"] in reachable_gids:
             name = data["name"]
             node_type = type_map.get(data["type"], "person") if data["type"] else "person"
-            cur.execute("INSERT OR IGNORE INTO nodes (id, name, type) VALUES (?, ?, ?)", (data["gid"], name, node_type))
+            cur.execute(
+                "INSERT OR IGNORE INTO nodes (id, name, type, disambiguation, area) VALUES (?, ?, ?, ?, ?)",
+                (data["gid"], name, node_type, data["disambiguation"], data["area"]),
+            )
             node_count += 1
 
     # Insert artist-artist edges (deduplicated in Python)
@@ -833,7 +867,8 @@ def main():
 
     # Step 5: Parse artists
     print()
-    artists = parse_artists(DATA_DIR)
+    areas = parse_areas(DATA_DIR)
+    artists = parse_artists(DATA_DIR, areas)
 
     # Step 6: Parse artist-artist relationships
     print()

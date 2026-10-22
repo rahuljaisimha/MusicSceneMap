@@ -4,7 +4,7 @@
 
 A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages and/or Cloudflare (Workers Builds); see `docs/CDN_HOSTING.md`.
 
-Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Discover and Similarity can fill their artist lists from the user's Spotify top artists.
+Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Discover and Similarity can fill their artist lists from the user's Spotify top artists. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists MusicBrainz-style: "Fuzz (US garage rock band · San Francisco)".
 
 ## Tech stack
 
@@ -40,8 +40,26 @@ App loading (lazy, non-blocking):
           (via tieredGraphAccess) all work while the download is in progress
         → Play still waits: game generation needs BFS over the whole graph
 
+Artist dropdown (ArtistAutocomplete, all artist inputs):
+    User types ≥2 chars (artistSuggest.findSuggestions; database first)
+        → Graph loaded: graphDb.searchArtists ranks graph artists instantly
+          (exact > prefix > word-prefix > substring); only graph artists are offered.
+          Labels from the graph's disambiguation/area columns, or (committed graph,
+          which lacks them) from one debounced Postgres search call, by MBID
+        → Graph not loaded yet, or no graph match: Postgres search (graph-neighbors
+          ?q= mode; same ranking; never logs to search_misses)
+        → MusicBrainz ONLY when the database has no match or can't be reached
+          (prefix query; its results also carry a genre from the top tag)
+        → Label: "Name (disambiguation · city · genre)", parts the disambiguation
+          already mentions left out
+        → Shows "Searching…" / "No matching artists" / "Couldn't load suggestions";
+          re-runs when the graph finishes loading. Browser MusicBrainz calls send no
+          custom headers (a User-Agent header would force a CORS preflight)
+        → A pick carries the MBID: Explore and Play's custom game resolve by ID;
+          Discover/Similarity add the name (they still resolve by name)
+
 Explore mode:
-    User searches artist
+    User searches artist (or picks from the dropdown)
         → sql.js queries SQLite for node + neighbors
         → Only person/group nodes shown (albums filtered out)
         → Relationships shown: member_of, former_member_of, support_musician
@@ -114,6 +132,11 @@ src/
 │   │                       Runtime compilation filter (>25 degree albums skipped).
 │   │                       Auto-detects gzip and decompresses if browser didn't.
 │   │                       preloadDb() starts the background download; a failed load can be retried.
+│   │                       searchArtists() ranks name matches for the dropdown (uses the optional
+│   │                       disambiguation/area columns when the graph has them).
+│   ├── artistSuggest.ts  — Artist-dropdown suggestions: graph → Postgres search → MusicBrainz
+│   │                       fallback (findSuggestions, sources injectable for tests); builds the
+│   │                       "(disambiguation · city · genre)" label.
 │   └── graphSource.ts    — Async artist lookups: local graph once loaded, else Postgres graph-neighbors
 │                           (log=0, memoized). Used by Explore and Discover.
 ├── game/
@@ -144,6 +167,8 @@ src/
 │   ├── searchResolution.ts — Pure logic: resolve an Explore search by MBID (just-clicked node) or by name.
 │   └── AboutPage.tsx     — Project info, data source credits, GitHub link.
 ├── components/
+│   ├── ArtistAutocomplete.tsx — Artist input + dropdown (keyboard, ARIA combobox, 44px rows on phones).
+│   │                       Used by SearchBar, Discover, Similarity and Play's custom game.
 │   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links.
 │   │                       Inline tabs on desktop; hamburger menu below 640px.
 │   ├── SearchBar.tsx     — Search input, expand, reset, settings. Responsive layout.
@@ -159,7 +184,8 @@ src/
 │   │                       handleSpotifyRedirect() runs in main.tsx before the router.
 │   ├── pollstar.ts       — Browser Pollstar client: venue autocomplete + upcoming events.
 │   │                       ~1 req/sec pacing (first fires ASAP), 24h cache, CORS via proxy.
-│   ├── musicbrainz.ts    — (Legacy) Live MusicBrainz API client. Unused now.
+│   ├── musicbrainz.ts    — Live MusicBrainz API client (1 req/sec). Fallback only: Tier-3 lookups and
+│   │                       dropdown suggestions the database has no match for (searchArtistsPrefix).
 │   ├── setlistfm.ts      — (Legacy) Live Setlist.fm API client.
 │   └── cache.ts          — localStorage request cache with TTL (used by pollstar.ts, 24h).
 ├── debug/
@@ -170,6 +196,7 @@ src/
 │   ├── similarity.test.ts / concerts.test.ts — Scoring and concert-ranking logic.
 │   ├── tieredGraphAccess.test.ts — Tier fallback order, caching, miss recording.
 │   ├── searchResolution.test.ts  — MBID-vs-name search resolution.
+│   ├── artistSuggest.test.ts     — Dropdown suggestion merging and labels.
 │   └── fixtures/         — Captured MusicBrainz API responses (search-fuzz, artist-arctic-monkeys, etc.).
 ├── App.tsx               — Router (HashRouter, 5 routes: Explore, Play, Discover, Similarity, About).
 ├── main.tsx              — Entry point.
@@ -191,11 +218,13 @@ supabase/
 │   │                       Resolves via DB then MusicBrainz. Caches, detects toured_with.
 │   ├── report-miss/      — Edge function: logs artists missing from browser SQLite.
 │   └── graph-neighbors/  — Edge function (Tier 2): artist + 1-hop neighbors from Postgres.
-│                           Logs misses to search_misses (graph-neighbors-not-found).
+│                           Logs misses to search_misses (graph-neighbors-not-found) unless log=0.
+│                           ?q= search mode for the artist dropdowns (never logs).
 ├── migrations/
 │   ├── 001_schema.sql    — PostgreSQL schema (artists, albums, venues, relationships).
 │   ├── 002_crawl_log.sql — Data freshness tracking.
-│   └── 003_search_misses.sql — Unknown artist query logging.
+│   ├── 003_search_misses.sql — Unknown artist query logging.
+│   └── 004_artist_search.sql — pg_trgm index on artists.name, artists.area column.
 ├── config.toml           — Supabase project config.
 └── README.md             — Deployment instructions.
 
@@ -221,7 +250,9 @@ CLAUDE.md                 — Instructions for Claude Code sessions (imports thi
 CREATE TABLE nodes (
     id TEXT PRIMARY KEY,    -- MusicBrainz GID
     name TEXT NOT NULL,
-    type TEXT NOT NULL      -- "person", "group", "album"
+    type TEXT NOT NULL,     -- "person", "group", "album"
+    disambiguation TEXT,    -- MusicBrainz comment, e.g. "US garage rock band" (newer regens only)
+    area TEXT               -- begin area (usually a city), else area (newer regens only)
 );
 
 CREATE TABLE edges (
@@ -239,6 +270,8 @@ CREATE TABLE edges (
 -- mix/engineer/recording/album_by) is still what the CURRENTLY COMMITTED
 -- graph.db.gz contains; the collaborator schema takes effect on the next regen.
 -- The app handles both (album nodes are simply absent after regen).
+-- disambiguation/area are also added by the next regen; until then the
+-- dropdown gets them from Postgres (searchArtists checks PRAGMA table_info).
 ```
 
 ## Key design decisions
@@ -250,6 +283,7 @@ CREATE TABLE edges (
 - **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS.
 - **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
 - **Explore only shows artists**: Album nodes filtered from search results and neighbor expansion.
+- **Artist dropdown: database first, MusicBrainz as fallback only**: ~1,500 names in the graph belong to more than one artist (four "Fuzz"es), so suggestions carry a MusicBrainz-style parenthetical from the database's `disambiguation` and `area` (both pipelines now write them; Postgres already has `disambiguation`). Suggestions come from the local graph, else Postgres via `graph-neighbors`' `?q=` search mode (which never logs misses; it shares the function with the `log=0` lookups rather than adding a second one); MusicBrainz is asked only when the database has no match or is unreachable. Only graph artists are suggested once the graph has loaded and matches, so every pick can be expanded. Genre is only shown for MusicBrainz fallback results (tags aren't in the main dump).
 - **Concert recommendations (Pollstar, client-side)**: Discover's Concerts toggle fetches upcoming events live in the browser (kept fresh, 24h localStorage cache) rather than via a backend — so results are always current and there's no scrape job to maintain. Pollstar requests are paced ~1 req/sec (first fires immediately) with a realistic UA; CORS handled by Vite dev proxy / corsproxy.io in prod (same pattern as setlistfm). Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
 - **Tiered graph coverage (Option 4)**: `src/pages/tieredGraphAccess.ts` wraps the core sql.js `GraphAccess` and, for artists NOT in the core graph, falls back through Tier 2 (Postgres `graph-neighbors` edge function) → Tier 3 (MusicBrainz live). (Discogs is a planned Tier 4, deferred.) Because the scorer's `GraphAccess` is synchronous but Tier 2/3 are async, it works in two phases: `prepareArtists(names)` (async prefetch of out-of-core artists → node + 1-hop neighbors, cached 24h, concurrent dupes deduped/shared) then `build()` returns a sync facade (core first, then overlay). Similarity and Concerts call `prepareArtists` before scoring, so out-of-core artists (esp. small concert headliners) now resolve instead of scoring 0. Tier 2 returns 1 hop only — reduced multi-hop accuracy for out-of-core artists is an accepted tradeoff. NOTE: Postgres is currently seeded with the SAME BFS-filtered universe as SQLite (`seed_supabase.py`), so Tier 3 (MusicBrainz) does the real coverage lifting until Postgres is re-seeded larger.
 - **Core-graph shrink (Option 4 pipeline)**: `process_mb_dump.py` no longer emits album nodes. Album co-credits are collapsed into undirected `person —collaborator→ person` edges (`collapse_credits_to_collaborator_edges`), removing high-degree album nodes (the runtime compilation filter becomes a no-op) and shrinking the download. `collaborator` has a placeholder weight (0.5) in `similarity.ts`. Requires a regen to take effect; the committed graph.db.gz still uses the album-node schema.
@@ -305,6 +339,8 @@ The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To re
 
 `src/test/similarity.test.ts` unit-tests the Similarity scoring logic (`src/pages/similarity.ts`) against an in-memory fake graph (no sql.js needed). Covers: relationship-weight ordering (member_of > former_member_of > support_musician > album credits), album-credit weighting by shared-credit count with saturation, connection detection (shared bandmates and shared albums), band-tied vs album-only ranking, unreachable artists scoring zero, unknown/not-found artists, breakdown sort order, and the best/average aggregate.
 
+`src/test/artistSuggest.test.ts` covers the artist dropdown: source order (graph labels with no request; Postgres labels by MBID; Postgres while the graph downloads; MusicBrainz only when the database has no match or is down), MusicBrainz field mapping (begin area over area, top tag as genre), and the parenthetical label.
+
 `src/test/tieredGraphAccess.test.ts` covers the tiered fallback (core → Postgres → MusicBrainz), Tier-2 caching, per-session dedupe, and miss recording. `src/test/searchResolution.test.ts` covers Explore's MBID-vs-name search resolution.
 
 `src/test/concerts.test.ts` unit-tests the concert-ranking logic (`src/pages/concerts.ts`) and Pollstar response parsing (`src/api/pollstar.ts`). Covers: headline-artist selection, ranking graph-known artists above unknowns (score 0), tie-break by soonest date, per-artist score memoization, supporting-artist listing, event dedupe, and `parseVenues`/`parseEvents`/`formatPollstarDate` field mapping. All offline (no network).
@@ -314,7 +350,7 @@ The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To re
 PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venue data.
 
 **Schema** (`supabase/migrations/`):
-- `artists` — mbid, name, type, disambiguation, country
+- `artists` — mbid, name, type, disambiguation, country, area (migration 004)
 - `albums` — mbid, name, primary_artist_mbid, release_year, type
 - `venues` — id, name, city, state, country
 - `relationships` — source_id, target_id, rel_type, count
@@ -324,7 +360,7 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 **Edge Functions** (`supabase/functions/`):
 - `venue-search` — On-demand venue lookup: resolves artist (DB → MusicBrainz fallback), checks cache, fetches Setlist.fm, stores results, detects touring partners. Adds missing artists to DB automatically.
 - `report-miss` — Lightweight POST endpoint for frontend to report artists missing from browser SQLite.
-- `graph-neighbors` — Tier-2 graph lookup: artist + 1-hop neighbors from Postgres for artists missing from the browser SQLite, and for every lookup while that graph is still downloading. `log=0` skips the miss log.
+- `graph-neighbors` — Tier-2 graph lookup: artist + 1-hop neighbors from Postgres for artists missing from the browser SQLite, and for every lookup while that graph is still downloading. `log=0` skips the miss log. `?q=` is a search mode for the artist dropdowns (ranked matches with disambiguation and area, no neighbors, never logs).
 
 **Search miss tracking**:
 - `sqlite-missing` — in Supabase DB but not browser SQLite (frontend reports via report-miss)
@@ -349,6 +385,7 @@ supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjga
 supabase functions deploy report-miss --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy graph-neighbors --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
+Run `migrations/004_artist_search.sql` for fast dropdown search (`graph-neighbors` `?q=` works without it, just slower and with no `area`), and re-run `seed_supabase.py` to fill `area`.
 
 ## What's missing / next steps
 

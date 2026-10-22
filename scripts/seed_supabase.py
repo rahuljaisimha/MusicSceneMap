@@ -102,7 +102,27 @@ def parse_links(data_dir: Path) -> dict[int, tuple[int, bool]]:
     return links
 
 
-def parse_artists(data_dir: Path) -> dict[int, dict]:
+# Needs migration 004 (artists.area).
+ARTIST_UPSERT = (
+    "INSERT INTO artists (mbid, name, type, disambiguation, country, area) VALUES %s "
+    "ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, "
+    "disambiguation=EXCLUDED.disambiguation, country=EXCLUDED.country, area=EXCLUDED.area"
+)
+
+
+def parse_areas(data_dir: Path) -> dict[int, str]:
+    """area table (extracted by process_mb_dump.py): area_id → name."""
+    areas = {}
+    with open(data_dir / "mbdump" / "area", "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 3:
+                areas[int(parts[0])] = parts[2]
+    return areas
+
+
+def parse_artists(data_dir: Path, areas: dict[int, str]) -> dict[int, dict]:
+    """Artists with disambiguation and area (begin area, usually a city, else area)."""
     artists = {}
     type_map = {"1": "person", "2": "group", "3": "group", "4": "group", "5": "person", "6": "person"}
     with open(data_dir / "mbdump" / "artist", "r", encoding="utf-8") as f:
@@ -110,11 +130,18 @@ def parse_artists(data_dir: Path) -> dict[int, dict]:
             parts = line.strip().split("\t")
             if len(parts) > 10:
                 aid = int(parts[0])
+                area = None
+                for idx in (17, 11):  # begin_area, then area
+                    if len(parts) > idx and parts[idx] != "\\N":
+                        area = areas.get(int(parts[idx]))
+                        if area:
+                            break
                 artists[aid] = {
                     "gid": parts[1],
                     "name": parts[2],
                     "type": type_map.get(parts[10], "person") if parts[10] != "\\N" else "person",
-                    "disambiguation": parts[13] if len(parts) > 13 and parts[13] != "\\N" else None,
+                    "disambiguation": parts[13] if len(parts) > 13 and parts[13] not in ("\\N", "") else None,
+                    "area": area,
                 }
     return artists
 
@@ -191,7 +218,7 @@ def main():
     relevant_ar_ids = {tid for tid, name in link_types.items() if name in RELEVANT_ARTIST_RECORDING_TYPES}
 
     print("Parsing artists...")
-    artists = parse_artists(DATA_DIR)
+    artists = parse_artists(DATA_DIR, parse_areas(DATA_DIR))
     print(f"  {len(artists)} artists")
 
     print("Parsing artist-artist relationships...")
@@ -225,10 +252,10 @@ def main():
     count = 0
     for aid, data in artists.items():
         if data["gid"] in reachable_gids:
-            batch.append((data["gid"], data["name"], data["type"], data.get("disambiguation"), None))
+            batch.append((data["gid"], data["name"], data["type"], data.get("disambiguation"), None, data.get("area")))
             if len(batch) >= BATCH_SIZE:
                 execute_values(cur,
-                    "INSERT INTO artists (mbid, name, type, disambiguation, country) VALUES %s ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, disambiguation=EXCLUDED.disambiguation, country=EXCLUDED.country",
+                    ARTIST_UPSERT,
                     batch)
                 count += len(batch)
                 batch = []
@@ -237,7 +264,7 @@ def main():
                     conn.commit()
     if batch:
         execute_values(cur,
-            "INSERT INTO artists (mbid, name, type, disambiguation, country) VALUES %s ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, disambiguation=EXCLUDED.disambiguation, country=EXCLUDED.country",
+            ARTIST_UPSERT,
             batch)
         count += len(batch)
     conn.commit()

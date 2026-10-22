@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { GAME_ARTISTS, type GameArtist } from "../game/artists";
 import { getDb, findNodeByName, bfsShortestPath, findNodeById, getNeighbors } from "../db/graphDb";
 import { DebugConsole } from "../components/DebugConsole";
+import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { debugLog } from "../debug/DebugLog";
 
 /** Only these relationship types are used in the game */
@@ -164,19 +165,31 @@ function buildGameFromNodes(
   return { game };
 }
 
+/** An artist picked from a dropdown: its exact node, while the input still shows its name. */
+interface Pick {
+  id: string;
+  name: string;
+}
+
 /**
- * Generate a game from user-provided start and end artist names.
+ * Generate a game from user-provided start and end artist names. A dropdown
+ * pick whose name still matches the input resolves by MBID (same-name artists).
  */
 async function generateCustomGame(
   startName: string,
-  endName: string
+  endName: string,
+  startPick: Pick | null,
+  endPick: Pick | null
 ): Promise<{ game: StoredGame } | { error: string }> {
   await getDb();
 
-  const startNode = findNodeByName(startName);
+  const lookup = (name: string, pick: Pick | null) =>
+    pick && pick.name === name ? findNodeById(pick.id) : findNodeByName(name);
+
+  const startNode = lookup(startName, startPick);
   if (!startNode) return { error: `"${startName}" was not found.` };
 
-  const endNode = findNodeByName(endName);
+  const endNode = lookup(endName, endPick);
   if (!endNode) return { error: `"${endName}" was not found.` };
 
   return buildGameFromNodes(startNode, endNode);
@@ -239,6 +252,8 @@ export function PlayPage() {
   const [showCustom, setShowCustom] = useState(false);
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
+  const [customStartPick, setCustomStartPick] = useState<Pick | null>(null);
+  const [customEndPick, setCustomEndPick] = useState<Pick | null>(null);
   const [customError, setCustomError] = useState<string | null>(null);
   const [customLoading, setCustomLoading] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
@@ -318,7 +333,7 @@ export function PlayPage() {
     setCustomLoading(true);
     setCustomError(null);
     clearGame();
-    const result = await generateCustomGame(start, end);
+    const result = await generateCustomGame(start, end, customStartPick, customEndPick);
     setCustomLoading(false);
     if ("error" in result) {
       setCustomError(result.error);
@@ -328,6 +343,8 @@ export function PlayPage() {
     setShowCustom(false);
     setCustomStart("");
     setCustomEnd("");
+    setCustomStartPick(null);
+    setCustomEndPick(null);
     setInput("");
     setSearchParams({ start: game.startId, end: game.endId }, { replace: true });
     setState({
@@ -341,7 +358,7 @@ export function PlayPage() {
       guesses: game.guesses,
       revealed: game.revealed,
     });
-  }, [customStart, customEnd, setSearchParams]);
+  }, [customStart, customEnd, customStartPick, customEndPick, setSearchParams]);
 
   const handleShare = useCallback(() => {
     if (state.status !== "playing") return;
@@ -641,21 +658,27 @@ export function PlayPage() {
                 <p style={styles.customHint}>
                   Pick your own start and end — any two artists or bands that are connected.
                 </p>
-                <input
-                  type="text"
+                <ArtistAutocomplete
                   value={customStart}
-                  onChange={(e) => setCustomStart(e.target.value)}
+                  onChange={setCustomStart}
+                  onSelect={(s) => {
+                    setCustomStart(s.name);
+                    setCustomStartPick({ id: s.id, name: s.name });
+                  }}
                   placeholder="Start artist or band"
-                  style={styles.input}
-                  aria-label="Start artist"
+                  inputStyle={styles.input}
+                  ariaLabel="Start artist"
                 />
-                <input
-                  type="text"
+                <ArtistAutocomplete
                   value={customEnd}
-                  onChange={(e) => setCustomEnd(e.target.value)}
+                  onChange={setCustomEnd}
+                  onSelect={(s) => {
+                    setCustomEnd(s.name);
+                    setCustomEndPick({ id: s.id, name: s.name });
+                  }}
                   placeholder="End artist or band"
-                  style={styles.input}
-                  aria-label="End artist"
+                  inputStyle={styles.input}
+                  ariaLabel="End artist"
                 />
                 {customError && <p style={styles.customError}>{customError}</p>}
                 <button

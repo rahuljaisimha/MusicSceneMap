@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Settings } from "./Settings";
+import { ArtistAutocomplete } from "./ArtistAutocomplete";
 
 interface Props {
-  onSearch: (query: string) => void;
+  /** `id` is set when the artist was picked from the dropdown. */
+  onSearch: (query: string, id?: string) => void;
   loading: boolean;
   prefill: string | null;
   onPrefillConsumed: () => void;
@@ -12,7 +14,6 @@ interface Props {
 export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onReset }: Props) {
   const [query, setQuery] = useState("");
   const [highlightKey, setHighlightKey] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (prefill) {
@@ -33,17 +34,20 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
   return (
     <form onSubmit={handleSubmit} className="search-bar" style={styles.form}>
       <div className="search-group" style={styles.searchGroup}>
-        <input
+        <ArtistAutocomplete
           key={highlightKey}
-          ref={inputRef}
-          type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={setQuery}
+          onSelect={(s) => {
+            setQuery(s.name);
+            onSearch(s.name, s.id);
+          }}
           placeholder="Search an artist (e.g. Ty Segall, Osees)"
           disabled={loading}
-          className={highlightKey > 0 ? "search-input-highlight" : ""}
-          style={styles.input}
-          aria-label="Search artists"
+          inputClassName={highlightKey > 0 ? "search-input-highlight" : ""}
+          inputStyle={styles.input}
+          wrapperStyle={styles.inputWrapper}
+          ariaLabel="Search artists"
         />
         <button type="submit" disabled={loading || !query.trim()} style={styles.button}>
           {loading ? "Loading…" : "Expand"}
@@ -74,9 +78,10 @@ const styles: Record<string, React.CSSProperties> = {
     flex: "1 1 250px",
     minWidth: "0",
   },
-  input: {
+  inputWrapper: {
     flex: "1 1 0",
-    minWidth: "0",
+  },
+  input: {
     padding: "0.5rem 0.75rem",
     borderRadius: "4px",
     border: "1px solid #444",

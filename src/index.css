@@ -179,6 +179,25 @@ input {
     min-width: 28px;
     min-height: 28px;
   }
+  /* Artist dropdown: finger-sized rows, stays above the on-screen keyboard */
+  .artist-option {
+    min-height: 44px;
+  }
+  .artist-suggestions {
+    max-height: 45vh !important;
+  }
+  /* Explore: the input is narrow next to its buttons, so the list spans the toolbar */
+  .search-bar {
+    position: relative;
+  }
+  .search-bar .artist-autocomplete {
+    position: static !important;
+  }
+  .search-bar .artist-suggestions {
+    left: 0.75rem !important;
+    right: 0.75rem !important;
+    top: calc(100% - 0.25rem) !important;
+  }
 }
 
 @keyframes highlight-fade {

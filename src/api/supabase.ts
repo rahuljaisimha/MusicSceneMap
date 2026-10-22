@@ -57,6 +57,29 @@ export async function getGraphNeighbors(
   return response.json();
 }
 
+/** An artist search result: enough to label same-name artists in a dropdown. */
+export interface ArtistSearchResult {
+  id: string;
+  name: string;
+  type: string;
+  disambiguation: string | null;
+  area: string | null;
+}
+
+/**
+ * Search-as-you-type artist lookup in Postgres (graph-neighbors' `q` mode).
+ * Ranked exact > prefix > word-prefix > substring. Never logs a search miss.
+ */
+export async function searchArtistsDb(query: string, limit = 8): Promise<ArtistSearchResult[]> {
+  const qs = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/graph-neighbors?${qs}`);
+  if (!response.ok) throw new Error(`artist search failed: ${response.status}`);
+  const body = (await response.json()) as { artists?: ArtistSearchResult[] };
+  // A graph-neighbors deploy without search mode answers with an error body instead.
+  if (!body.artists) throw new Error("artist search isn't deployed");
+  return body.artists;
+}
+
 export interface VenueSearchResponse {
   source: "cache" | "api";
   artist: string;

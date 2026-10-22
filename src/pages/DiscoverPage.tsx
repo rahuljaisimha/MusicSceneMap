@@ -4,6 +4,7 @@ import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarE
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { rankConcerts, dedupeEvents, headlineArtist, type RankedConcert } from "./concerts";
 import { SpotifyImportButton } from "../components/SpotifyImportButton";
+import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 
 type DiscoverMode = "venues" | "concerts";
 
@@ -20,23 +21,17 @@ export function DiscoverPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleAddArtist = () => {
-    const trimmed = artistInput.trim();
-    if (trimmed && !artists.includes(trimmed)) {
-      setArtists([...artists, trimmed]);
-      setArtistInput("");
-    }
+  const addArtist = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!artists.includes(trimmed)) setArtists([...artists, trimmed]);
+    setArtistInput("");
   };
+
+  const handleAddArtist = () => addArtist(artistInput);
 
   const handleRemoveArtist = (name: string) => {
     setArtists(artists.filter((a) => a !== name));
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleAddArtist();
-    }
   };
 
   const handleSearch = async () => {
@@ -285,13 +280,15 @@ export function DiscoverPage() {
           <div style={styles.field}>
             <label style={styles.label}>Artists</label>
             <div style={styles.inputRow}>
-              <input
-                type="text"
+              <ArtistAutocomplete
                 value={artistInput}
-                onChange={(e) => setArtistInput(e.target.value)}
-                onKeyDown={handleKeyDown}
+                onChange={setArtistInput}
+                onSelect={(a) => addArtist(a.name)}
+                onEnter={handleAddArtist}
                 placeholder="Add an artist..."
-                style={styles.input}
+                inputStyle={styles.input}
+                wrapperStyle={styles.autocomplete}
+                ariaLabel="Add an artist"
               />
               <button
                 type="button"
@@ -449,6 +446,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: "0.8rem", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.03em" },
   input: { padding: "0.5rem 0.75rem", borderRadius: "4px", border: "1px solid #444", background: "#2a2a2a", color: "#e0e0e0", fontSize: "16px" },
   inputRow: { display: "flex", gap: "0.5rem" },
+  autocomplete: { flex: 1 },
   addBtn: { padding: "0.5rem 1rem", borderRadius: "4px", border: "none", background: "#48dbfb", color: "#000", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
   chipList: { display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.25rem" },
   chip: { display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.2rem 0.6rem", borderRadius: "12px", background: "#2a2a2a", color: "#e0e0e0", fontSize: "0.8rem", border: "1px solid #444" },

@@ -330,3 +330,66 @@ export function searchNodes(query: string, limit = 10): NodeRecord[] {
     type: row[2] as string,
   }));
 }
+
+export interface ArtistMatch extends NodeRecord {
+  /** MusicBrainz disambiguation comment, if the graph has that column. */
+  disambiguation?: string;
+  /** Begin area (often a city) or area, if the graph has that column. */
+  area?: string;
+}
+
+let detailColumns: { disambiguation: boolean; area: boolean } | null = null;
+
+/** Whether the loaded graph stores disambiguation/area (graphs from newer pipeline runs). */
+export function hasDetailColumns(): boolean {
+  if (!db) return false;
+  const cols = getDetailColumns();
+  return cols.disambiguation || cols.area;
+}
+
+/** Which optional detail columns this graph's nodes table has (added by newer pipeline runs). */
+function getDetailColumns(): { disambiguation: boolean; area: boolean } {
+  if (detailColumns) return detailColumns;
+  const cols = new Set<string>();
+  const res = db!.exec("PRAGMA table_info(nodes)");
+  for (const row of res[0]?.values ?? []) cols.add(row[1] as string);
+  detailColumns = { disambiguation: cols.has("disambiguation"), area: cols.has("area") };
+  return detailColumns;
+}
+
+/**
+ * Search-as-you-type artist lookup (persons and groups, no albums). Ranks an
+ * exact name first, then names starting with the query, then names with a
+ * word starting with it, then any substring match; shorter names first within
+ * each rank.
+ */
+export function searchArtists(query: string, limit = 10): ArtistMatch[] {
+  const q = query.trim();
+  if (!db || !q) return [];
+  const cols = getDetailColumns();
+  const like = q.replace(/[\\%_]/g, "\\$&");
+  const select = [
+    "id", "name", "type",
+    cols.disambiguation ? "disambiguation" : "NULL",
+    cols.area ? "area" : "NULL",
+  ].join(", ");
+  const results = db.exec(
+    `SELECT ${select} FROM nodes
+     WHERE type != 'album' AND name LIKE ? ESCAPE '\\'
+     ORDER BY CASE
+       WHEN name = ? COLLATE NOCASE THEN 0
+       WHEN name LIKE ? ESCAPE '\\' THEN 1
+       WHEN name LIKE ? ESCAPE '\\' THEN 2
+       ELSE 3 END, length(name), name
+     LIMIT ?`,
+    [`%${like}%`, q, `${like}%`, `% ${like}%`, limit]
+  );
+  if (results.length === 0) return [];
+  return results[0]!.values.map((row) => ({
+    id: row[0] as string,
+    name: row[1] as string,
+    type: row[2] as string,
+    ...(row[3] ? { disambiguation: row[3] as string } : {}),
+    ...(row[4] ? { area: row[4] as string } : {}),
+  }));
+}

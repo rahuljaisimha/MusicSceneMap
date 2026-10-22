@@ -20,6 +20,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
  *   { found: boolean,
  *     artist: { id, name, type } | null,
  *     neighbors: [{ node: { id, name, type }, relType: string }] }
+ *
+ * Search mode, for the app's artist dropdowns (no neighbors, never logs: a
+ * partial name typed into a dropdown isn't a lookup that missed):
+ *   - q:     typed text (at least 2 characters)
+ *   - limit: max results (default 8, max 25)
+ *
+ * Response:
+ *   { artists: [{ id, name, type, disambiguation, area }] }
+ *
+ * Ranked: exact name, then names starting with q, then names with a word
+ * starting with q, then other matches; shorter names first. `area` (usually
+ * a city) is null until migration 004 has run and the table is re-seeded.
  */
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -48,6 +60,58 @@ const ARTIST_REL_TYPES = new Set([
   "recording",
 ]);
 
+// Search candidates fetched per pattern before ranking.
+const SEARCH_CANDIDATES = 100;
+
+interface ArtistRow {
+  mbid: string;
+  name: string;
+  type: string;
+  disambiguation?: string | null;
+  area?: string | null;
+}
+
+function searchRank(name: string, q: string): number {
+  const n = name.toLowerCase();
+  if (n === q) return 0;
+  if (n.startsWith(q)) return 1;
+  if (n.includes(` ${q}`)) return 2;
+  return 3;
+}
+
+async function searchArtists(q: string, limit: number): Promise<Response> {
+  if (q.length < 2) return json({ artists: [] });
+  // Match the typed text literally (no LIKE wildcards from the user).
+  const pattern = q.replace(/[\\%_]/g, "\\$&");
+  // select("*") so the optional area column is returned once migration 004 has run.
+  const [prefix, contains] = await Promise.all([
+    supabase.from("artists").select("*").ilike("name", `${pattern}%`).limit(SEARCH_CANDIDATES),
+    supabase.from("artists").select("*").ilike("name", `%${pattern}%`).limit(SEARCH_CANDIDATES),
+  ]);
+  const error = prefix.error ?? contains.error;
+  if (error) return json({ error: error.message }, 500);
+
+  const byId = new Map<string, ArtistRow>();
+  for (const row of [...(prefix.data ?? []), ...(contains.data ?? [])] as ArtistRow[]) {
+    byId.set(row.mbid, row);
+  }
+  const lower = q.toLowerCase();
+  const artists = [...byId.values()]
+    .sort((a, b) =>
+      searchRank(a.name, lower) - searchRank(b.name, lower) ||
+      a.name.length - b.name.length ||
+      a.name.localeCompare(b.name))
+    .slice(0, limit)
+    .map((a) => ({
+      id: a.mbid,
+      name: a.name,
+      type: a.type,
+      disambiguation: a.disambiguation || null,
+      area: a.area || null,
+    }));
+  return json({ artists });
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -66,8 +130,14 @@ serve(async (req) => {
     const name = url.searchParams.get("name");
     const logMiss = url.searchParams.get("log") !== "0";
 
+    const q = url.searchParams.get("q");
+    if (q !== null) {
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 8, 1), 25);
+      return await searchArtists(q.trim(), limit);
+    }
+
     if (!mbid && !name) {
-      return json({ error: "Missing 'mbid' or 'name' parameter" }, 400);
+      return json({ error: "Missing 'mbid', 'name' or 'q' parameter" }, 400);
     }
 
     // 1. Resolve the artist row.

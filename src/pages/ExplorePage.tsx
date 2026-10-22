@@ -111,12 +111,13 @@ export function ExplorePage() {
   }, [dbReady]);
 
   const handleSearch = useCallback(
-    async (artistName: string) => {
+    async (artistName: string, pickedId?: string) => {
       setLoading(true);
       setError(null);
       try {
         // Resolve by exact MBID if the query matches the last-clicked node, else by name
-        const resolution = resolveSearchTarget(artistName, pendingNode.current);
+        // (a dropdown pick carries its MBID, which is exact too)
+        const resolution = resolveSearchTarget(artistName, pickedId ? { name: artistName, id: pickedId } : pendingNode.current);
         const found = await expandArtist(resolution, graph);
         pendingNode.current = null;
         if (!found) {

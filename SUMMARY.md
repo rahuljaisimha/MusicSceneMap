@@ -25,7 +25,7 @@ Data pipeline (offline, run manually):
         → BFS from ~145 seed artists (6 hops via member_of/support_musician)
         → Deduplicates memberships (any active = current, not former)
         → SQLite database: nodes (persons, groups, albums) + edges
-        → Output: public/graph.db.gz (~38MB, committed to repo; also uploaded to R2 for Cloudflare)
+        → Output: public/graph.db.gz (~39MB, committed to repo; also uploaded to R2 for Cloudflare)
 
 App loading (lazy, non-blocking):
     UI renders immediately; main.tsx calls preloadDb() once the browser is idle
@@ -44,8 +44,8 @@ Artist dropdown (ArtistAutocomplete, all artist inputs):
     User types ≥2 chars (artistSuggest.findSuggestions; database first)
         → Graph loaded: graphDb.searchArtists ranks graph artists instantly
           (exact > prefix > word-prefix > substring); only graph artists are offered.
-          Labels from the graph's disambiguation/area columns, or (committed graph,
-          which lacks them) from one debounced Postgres search call, by MBID
+          Labels from the graph's disambiguation/area columns (no request); older
+          graphs without them get labels from one debounced Postgres search, by MBID
         → Graph not loaded yet, or no graph match: Postgres search (graph-neighbors
           ?q= mode; same ranking; never logs to search_misses)
         → MusicBrainz ONLY when the database has no match or can't be reached
@@ -251,8 +251,8 @@ CREATE TABLE nodes (
     id TEXT PRIMARY KEY,    -- MusicBrainz GID
     name TEXT NOT NULL,
     type TEXT NOT NULL,     -- "person", "group", "album"
-    disambiguation TEXT,    -- MusicBrainz comment, e.g. "US garage rock band" (newer regens only)
-    area TEXT               -- begin area (usually a city), else area (newer regens only)
+    disambiguation TEXT,    -- MusicBrainz comment, e.g. "US garage rock band" (~36% of artists)
+    area TEXT               -- begin area (usually a city), else area (~72% of artists)
 );
 
 CREATE TABLE edges (
@@ -263,15 +263,11 @@ CREATE TABLE edges (
 
 -- Indexes: edges(source), edges(target), edges(rel_type), nodes(name COLLATE NOCASE), nodes(type)
 --
--- NOTE (Option 4 core-shrink): the pipeline (process_mb_dump.py) now emits a
--- SMALLER core graph — person/group nodes only (NO album nodes), with album
--- co-credits collapsed into direct person<->person "collaborator" edges. The
--- older album-node schema (type "album"; rel_types producer/vocal/instrument/
--- mix/engineer/recording/album_by) is still what the CURRENTLY COMMITTED
--- graph.db.gz contains; the collaborator schema takes effect on the next regen.
--- The app handles both (album nodes are simply absent after regen).
--- disambiguation/area are also added by the next regen; until then the
--- dropdown gets them from Postgres (searchArtists checks PRAGMA table_info).
+-- The pipeline (process_mb_dump.py) emits person/group nodes only (no album
+-- nodes); album co-credits are collapsed into direct person<->person
+-- "collaborator" edges. Graphs older than the disambiguation/area columns still
+-- load: searchArtists checks PRAGMA table_info and the dropdown then gets
+-- labels from Postgres.
 ```
 
 ## Key design decisions
@@ -286,7 +282,7 @@ CREATE TABLE edges (
 - **Artist dropdown: database first, MusicBrainz as fallback only**: ~1,500 names in the graph belong to more than one artist (four "Fuzz"es), so suggestions carry a MusicBrainz-style parenthetical from the database's `disambiguation` and `area` (both pipelines now write them; Postgres already has `disambiguation`). Suggestions come from the local graph, else Postgres via `graph-neighbors`' `?q=` search mode (which never logs misses; it shares the function with the `log=0` lookups rather than adding a second one); MusicBrainz is asked only when the database has no match or is unreachable. Only graph artists are suggested once the graph has loaded and matches, so every pick can be expanded. Genre is only shown for MusicBrainz fallback results (tags aren't in the main dump).
 - **Concert recommendations (Pollstar, client-side)**: Discover's Concerts toggle fetches upcoming events live in the browser (kept fresh, 24h localStorage cache) rather than via a backend — so results are always current and there's no scrape job to maintain. Pollstar requests are paced ~1 req/sec (first fires immediately) with a realistic UA; CORS handled by Vite dev proxy / corsproxy.io in prod (same pattern as setlistfm). Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
 - **Tiered graph coverage (Option 4)**: `src/pages/tieredGraphAccess.ts` wraps the core sql.js `GraphAccess` and, for artists NOT in the core graph, falls back through Tier 2 (Postgres `graph-neighbors` edge function) → Tier 3 (MusicBrainz live). (Discogs is a planned Tier 4, deferred.) Because the scorer's `GraphAccess` is synchronous but Tier 2/3 are async, it works in two phases: `prepareArtists(names)` (async prefetch of out-of-core artists → node + 1-hop neighbors, cached 24h, concurrent dupes deduped/shared) then `build()` returns a sync facade (core first, then overlay). Similarity and Concerts call `prepareArtists` before scoring, so out-of-core artists (esp. small concert headliners) now resolve instead of scoring 0. Tier 2 returns 1 hop only — reduced multi-hop accuracy for out-of-core artists is an accepted tradeoff. NOTE: Postgres is currently seeded with the SAME BFS-filtered universe as SQLite (`seed_supabase.py`), so Tier 3 (MusicBrainz) does the real coverage lifting until Postgres is re-seeded larger.
-- **Core-graph shrink (Option 4 pipeline)**: `process_mb_dump.py` no longer emits album nodes. Album co-credits are collapsed into undirected `person —collaborator→ person` edges (`collapse_credits_to_collaborator_edges`), removing high-degree album nodes (the runtime compilation filter becomes a no-op) and shrinking the download. `collaborator` has a placeholder weight (0.5) in `similarity.ts`. Requires a regen to take effect; the committed graph.db.gz still uses the album-node schema.
+- **Core-graph shrink (Option 4 pipeline)**: `process_mb_dump.py` no longer emits album nodes. Album co-credits are collapsed into undirected `person —collaborator→ person` edges (`collapse_credits_to_collaborator_edges`), removing high-degree album nodes (the runtime compilation filter becomes a no-op) and shrinking the download. `collaborator` has a placeholder weight (0.5) in `similarity.ts`. The committed graph.db.gz uses this schema.
 - **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
 - **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
 - **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.

@@ -74,6 +74,7 @@ export type EdgeType =
   | "part_of_scene"
   | "signed_to"
   | "collaborated_with"
+  | "produced_for"
   | "opened_for"
   | "toured_with"
   | "performed_at_festival";
@@ -130,6 +131,7 @@ export const EDGE_COLORS: Record<EdgeType, string> = {
   part_of_scene: "#a29bfe",
   signed_to: "#55efc4",
   collaborated_with: "#81ecec",
+  produced_for: "#a29bfe",
   opened_for: "#fdcb6e",
   toured_with: "#e17055",
   performed_at_festival: "#fd79a8",

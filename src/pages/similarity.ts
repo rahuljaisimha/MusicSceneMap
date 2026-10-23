@@ -53,7 +53,10 @@ export const REL_WEIGHTS: Record<string, number> = {
   member_of: 1.0, // current band member — strongest tie
   former_member_of: 0.75, // former member — slightly less
   support_musician: 0.6, // supporting/touring musician — slightly less again
-  collaborator: 0.5, // collapsed album co-credit (person↔person "collaborator" edge)
+  collaborator: 0.5, // album co-credit between two people (graphs built before collaborated_with)
+  collaborated_with: 0.5, // sang or played on the other artist's records (count = song credits)
+  produced_for: 0.45, // produced the other artist's records
+  opened_for: 0.45, // one act opened for the other (concert-database; placeholder)
   // Album-credit relationship types. Each is a comparatively weak single tie;
   // strength accrues via the *count* of shared credits (see ALBUM_CREDIT_*).
   producer: 0.4,
@@ -246,7 +249,8 @@ export function collectConnections(
       const weight = Math.min(shared.weight, info.weight);
       connections.push({
         kind: "shared",
-        relType: shared.relType === info.relType ? shared.relType : "member_of",
+        // Label it by the weaker tie, the one that sets the weight.
+        relType: shared.weight <= info.weight ? shared.relType : info.relType,
         via: info.name,
         weight,
       });

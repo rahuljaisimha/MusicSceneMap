@@ -18,6 +18,8 @@ import { getGraphNeighbors } from "../api/supabase";
 export interface Neighbor {
   node: NodeRecord;
   relType: string;
+  /** True when the artist looked up is the edge's source (unknown for server lookups). */
+  outgoing?: boolean;
 }
 
 interface RemoteEntry {

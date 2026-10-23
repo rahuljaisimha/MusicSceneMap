@@ -119,14 +119,14 @@ GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/graph-neighbors
   "found": true,
   "artist": { "id": "<mbid>", "name": "The Sleeves", "type": "group" },
   "neighbors": [
-    { "node": { "id": "<mbid>", "name": "Someone", "type": "person" }, "relType": "member_of" }
+    { "node": { "id": "<mbid>", "name": "Someone", "type": "person" }, "relType": "member_of", "outgoing": false }
   ]
 }
 ```
 
 Misses are logged to `search_misses` with source `graph-neighbors-not-found`, unless `log=0` is passed.
 
-Besides the Tier-2 fallback, the app calls this for every artist lookup while the ~38MB browser graph is still downloading (see `src/db/graphSource.ts`), always with `log=0`.
+Besides the Tier-2 fallback, the app calls this for every artist lookup while the ~49MB browser graph is still downloading (see `src/db/graphSource.ts`), always with `log=0`.
 
 ### Search mode (artist dropdowns)
 
@@ -147,7 +147,9 @@ GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/graph-neighbors?q=fuzz
 
 Ranked: exact name, names starting with `q`, names with a word starting with `q`, other substring matches; shorter names first. No neighbors, and never writes to `search_misses`. `area` is null until migration 004 has run and `seed_supabase.py` has been re-run. The app asks MusicBrainz only when this returns nothing or fails (see `src/db/artistSuggest.ts`).
 
-> Note: Postgres is currently seeded with the SAME BFS-filtered universe as the SQLite graph (`seed_supabase.py`), so today it rarely has coverage the core graph lacks. It becomes the meaningful Tier-2 source once re-seeded with a larger universe. Until then MusicBrainz (Tier 3) does the real coverage lifting.
+Relationship types returned: `member_of`, `former_member_of`, `support_musician`, `collaborated_with` and `produced_for` (from the credited artist to the record's artist; `outgoing` says which end the looked-up artist is), and `opened_for` once Postgres has it.
+
+> Postgres is seeded (`seed_supabase.py`) with every artist within reach of the curated seeds and of concert-database's artists, never cut down for size; the browser graph is the same set, cut down to fit its ~50 MB download when it has to be. So Postgres covers the artists the browser graph leaves out.
 
 ---
 
@@ -177,3 +179,4 @@ Run in the Supabase SQL Editor (Dashboard → SQL Editor):
 2. `migrations/002_crawl_log.sql` — crawl freshness tracking
 3. `migrations/003_search_misses.sql` — logging unknown artist queries
 4. `migrations/004_artist_search.sql` — trigram index for `graph-neighbors` search mode, `artists.area` (re-run `seed_supabase.py` after it to fill `area`)
+5. `migrations/005_collaborations.sql` — removes the album table and the per-album credit rows (seed_supabase.py now writes `collaborated_with` / `produced_for` artist → artist rows with the song-credit count), and two redundant indexes. Then run `VACUUM FULL relationships;` on its own to give the space back, re-run `seed_supabase.py`, and redeploy `graph-neighbors`.

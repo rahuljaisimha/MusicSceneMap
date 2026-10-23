@@ -3,24 +3,29 @@
 MusicBrainz Data Dump Processor
 ================================
 
-Downloads the MusicBrainz data dump and extracts a game-ready adjacency graph.
-
-Output: A JSON file with artists and their relationships, filtered to artists
-with sufficient connections to be useful for the Six Degrees game.
+Builds the browser graph (public/graph.db.gz) from the MusicBrainz data dump.
+seed_supabase.py builds Postgres from the same inputs (load_graph_inputs).
 
 Usage:
-    python3 scripts/process_mb_dump.py
+    python3 scripts/process_mb_dump.py                      # then: python3 scripts/add_concertdb_edges.py
+    python3 scripts/process_mb_dump.py --concertdb-hops 2   # fewer hops around concert-database's artists
 
 Requirements:
-    - Python 3.9+
-    - ~10GB free disk space (for download + processing)
-    - Internet connection (for initial download)
+    - Python 3.10+
+    - ~25GB free disk space (download + extracted tables), ~10GB RAM
+    - Internet connection (for the initial download)
+    - Optional: a concert-database ledger (CONCERTDB_LEDGER, default
+      ~/concert-database/data/ledger.sqlite); without it only the curated seeds are used
 
-The script will:
-1. Download the relevant tables from the MusicBrainz data dump
-2. Parse artist and relationship data
-3. Filter to well-connected artists
-4. Export a compact JSON adjacency graph
+Which artists: every artist within 6 hops of the curated seeds (SEED_ARTIST_NAMES)
+and of each artist with a concert in concert-database (CONCERTDB_HOPS, default 6),
+over band relationships (member of / supporting musician). If graph.db.gz comes
+out over MAX_GZIP_MB, it is rebuilt with one hop fewer around concert-database's
+artists until it fits; Supabase keeps the full set.
+
+Edges: band relationships, plus collaborations: a producer / vocal / instrument
+credit on another artist's record becomes one "produced_for" or
+"collaborated_with" edge to that record's artist (see build_collaborations).
 """
 
 import os
@@ -50,13 +55,12 @@ RELEVANT_ARTIST_ARTIST_TYPES = {
 }
 
 # Relationship types we care about for artist-to-recording credits
+# Credits kept (see COLLAB_REL_TYPES): producing and performing. Engineering
+# credits (mix, engineer, recording) are left out.
 RELEVANT_ARTIST_RECORDING_TYPES = {
     "producer",
     "vocal",
     "instrument",
-    "mix",
-    "engineer",
-    "recording",
 }
 
 
@@ -307,25 +311,6 @@ def parse_artist_relationships(
     return relationships
 
 
-def parse_recordings(data_dir: Path) -> dict[int, str]:
-    """Parse recording table. Returns dict of recording_id → recording_gid."""
-    recordings = {}
-    rec_file = data_dir / "mbdump" / "recording"
-
-    print("Parsing recording table...")
-    with open(rec_file, "r", encoding="utf-8") as f:
-        for line in f:
-            parts = line.strip().split("\t")
-            if len(parts) >= 2:
-                # Columns: id, gid, name, artist_credit, length, comment, ...
-                rec_id = int(parts[0])
-                rec_gid = parts[1]
-                recordings[rec_id] = rec_gid
-
-    print(f"  Found {len(recordings)} recordings")
-    return recordings
-
-
 def build_recording_to_release_group(data_dir: Path) -> dict[int, int]:
     """
     Build a mapping from recording_id → release_group_id.
@@ -442,37 +427,9 @@ def parse_artist_credit_name(data_dir: Path) -> dict[int, int]:
     return credit_to_artist
 
 
-def build_album_to_artist_mapping(
-    release_groups: dict[int, dict],
-    credit_to_artist: dict[int, int],
-    artists: dict[int, dict],
-) -> dict[str, str]:
-    """
-    Build mapping of album_gid → primary_artist_gid.
-    Uses release_group.artist_credit → artist_credit_name → artist.
-    """
-    print("Building album → primary artist mapping...")
-
-    album_to_artist = {}  # album_gid → artist_gid
-    for rg_id, rg_data in release_groups.items():
-        credit_id = rg_data.get("artist_credit")
-        if credit_id is None:
-            continue
-        artist_id = credit_to_artist.get(credit_id)
-        if artist_id is None:
-            continue
-        artist = artists.get(artist_id)
-        if artist is None:
-            continue
-        album_to_artist[rg_data["gid"]] = artist["gid"]
-
-    print(f"  Mapped {len(album_to_artist)} albums to primary artists")
-    return album_to_artist
-
-
 def parse_artist_recording_relationships(
     data_dir: Path,
-    links: dict[int, int],
+    links: dict[int, tuple[int, bool]],
     link_types: dict[int, str],
     relevant_type_ids: set[int],
 ) -> list[tuple[int, int, str]]:
@@ -486,513 +443,368 @@ def parse_artist_recording_relationships(
             parts = line.strip().split("\t")
             if len(parts) >= 4:
                 # Columns: id, link_id, entity0 (artist), entity1 (recording), ...
-                link_id = int(parts[1])
-                artist_id = int(parts[2])
-                recording_id = int(parts[3])
-
-                link_info = links.get(link_id)
-                if link_info:
-                    link_type_id, _ = link_info
-                    if link_type_id in relevant_type_ids:
-                        type_name = link_types[link_type_id]
-                        relationships.append((artist_id, recording_id, type_name))
+                link_info = links.get(int(parts[1]))
+                if link_info and link_info[0] in relevant_type_ids:
+                    relationships.append((int(parts[2]), int(parts[3]), link_types[link_info[0]]))
 
     print(f"  Found {len(relationships)} relevant artist-recording relationships")
     return relationships
 
 
-def flatten_recording_credits_to_album_credits(
+# --- Collaborations ----------------------------------------------------------
+#
+# A credit on someone else's record becomes one edge from the credited artist to
+# the album's (release group's) first credited artist, e.g. Josh Homme -> Arctic
+# Monkeys for producing and playing on Humbug. Producing and performing are kept
+# apart; engineering credits (mix, engineer, recording) are left out. `count` is
+# the number of song credits behind the edge (one per credited recording, per role).
+# Albums aren't stored: no album nodes, no album table.
+
+COLLAB_REL_TYPES = {
+    "producer": "produced_for",        # produced their record
+    "vocal": "collaborated_with",      # sang on their record
+    "instrument": "collaborated_with", # played on their record
+}
+VARIOUS_ARTISTS = "89ad4ac3-39f7-470e-963a-56509c546377"
+
+
+def build_collaborations(
     artist_recording_rels: list[tuple[int, int, str]],
     recording_to_rg: dict[int, int],
     release_groups: dict[int, dict],
+    credit_to_artist: dict[int, int],
     artists: dict[int, dict],
-) -> list[tuple[str, str, str]]:
+) -> dict[tuple[str, str, str], int]:
+    """(contributor MBID, album artist MBID, rel_type) -> number of song credits.
+
+    Credits on an artist's own records, on "Various Artists" compilations, and
+    by entities without their own artist entry are skipped.
     """
-    Flatten recording-level credits to per-artist-per-album credits.
-    
-    Only includes credits where the artist has their own MusicBrainz artist page
-    (i.e., exists in the artists table). This filters out placeholder entries.
-    
-    Returns list of (artist_gid, album_gid, credit_type) tuples, deduplicated.
-    """
-    print("Flattening recording credits to album-level credits...")
-    print("  (Only including artists with their own MusicBrainz page)")
-
-    # Deduplicate: (artist_id, rg_id, credit_type) → keep unique
-    seen = set()
-    credits = []
-
-    skipped_no_artist = 0
-    for artist_id, recording_id, rel_type in artist_recording_rels:
-        # Only include if this artist has their own MB page
-        if artist_id not in artists:
-            skipped_no_artist += 1
+    print("Building collaborations (credited artist -> album artist)...")
+    counts: dict[tuple[str, str, str], int] = defaultdict(int)
+    for artist_id, recording_id, credit in artist_recording_rels:
+        rel = COLLAB_REL_TYPES.get(credit)
+        if rel is None or artist_id not in artists:
             continue
-
-        rg_id = recording_to_rg.get(recording_id)
-        if not rg_id:
+        rg = recording_to_rg.get(recording_id)
+        info = release_groups.get(rg) if rg is not None else None
+        if not info:
             continue
-
-        key = (artist_id, rg_id, rel_type)
-        if key in seen:
+        owner = credit_to_artist.get(info.get("artist_credit"))
+        if owner is None or owner == artist_id or owner not in artists:
             continue
-        seen.add(key)
-
-        artist = artists[artist_id]
-        rg_info = release_groups.get(rg_id)
-        if not rg_info:
+        owner_gid = artists[owner]["gid"]
+        if owner_gid == VARIOUS_ARTISTS:
             continue
-
-        credits.append((artist["gid"], rg_info["gid"], rel_type))
-
-    print(f"  Skipped {skipped_no_artist} credits from non-artist entities")
-    print(f"  Unique album credits (before filtering): {len(credits)}")
-
-    # Filter out compilations: albums with more than 25 unique contributors
-    # are likely compilations, tribute albums, or festival recordings
-    MAX_CONTRIBUTORS_PER_ALBUM = 25
-    album_contributor_count: dict[str, int] = defaultdict(int)
-    for _, album_gid, _ in credits:
-        album_contributor_count[album_gid] += 1
-
-    compilation_gids = {gid for gid, count in album_contributor_count.items() if count > MAX_CONTRIBUTORS_PER_ALBUM}
-    print(f"  Filtering {len(compilation_gids)} likely compilations (>{MAX_CONTRIBUTORS_PER_ALBUM} contributors)")
-
-    credits = [(a, alb, ct) for a, alb, ct in credits if alb not in compilation_gids]
-    print(f"  Unique album credits (after filtering): {len(credits)}")
-    return credits
+        counts[(artists[artist_id]["gid"], owner_gid, rel)] += 1
+    by_type = defaultdict(int)
+    for (_, _, rel) in counts:
+        by_type[rel] += 1
+    print(f"  Collaborations: {len(counts)} ({dict(by_type)})")
+    return counts
 
 
-# Cap on how many collaborators one album can generate pairs for. Even after the
-# compilation filter, a busy album can create O(n^2) pairs; this bounds it.
-MAX_COLLAB_CONTRIBUTORS = 25
+# --- Which artists are in the graph -------------------------------------------
+
+# Curated seed artists (also the game's list, src/game/artists.ts), and the
+# artists with concerts in concert-database (https://github.com/rahuljaisimha/concert-database),
+# read from its ledger. The graph is every artist within a seed's hop budget over
+# band relationships (member of / supporting musician).
+SEED_ARTIST_NAMES = [
+    # Modern Pop / Hip Hop / R&B
+    "Bruno Mars", "The Weeknd", "Rihanna", "Taylor Swift", "Lady Gaga",
+    "Ariana Grande", "Drake", "Billie Eilish", "Kendrick Lamar", "Post Malone",
+    "Kanye West", "Beyoncé", "Frank Ocean", "Tyler, the Creator",
+    "Pharrell Williams", "Jay-Z", "Snoop Dogg", "Dr. Dre", "André 3000",
+    "Nas", "MF DOOM", "Madlib", "RZA", "Q-Tip", "Lauryn Hill",
+    "Missy Elliott", "Justin Timberlake", "D'Angelo", "Erykah Badu",
+    "Anderson .Paak", "Thundercat", "Flying Lotus",
+    # Classic Rock
+    "Jimmy Page", "Robert Plant", "John Paul Jones", "Mick Jagger",
+    "Keith Richards", "David Bowie", "Paul McCartney", "George Harrison",
+    "Eric Clapton", "Jimi Hendrix", "Roger Waters", "David Gilmour",
+    "Freddie Mercury", "Brian May", "Pete Townshend", "Neil Young",
+    "Stevie Nicks", "Peter Gabriel", "Phil Collins",
+    # Punk / Post-Punk
+    "Iggy Pop", "Joe Strummer", "Robert Smith", "David Byrne",
+    # Grunge / 90s Alt
+    "Dave Grohl", "Chris Cornell", "Eddie Vedder", "Billy Corgan",
+    "Trent Reznor", "Flea", "John Frusciante", "Tom Morello",
+    # Indie / Alternative
+    "Thom Yorke", "Jack White", "Josh Homme", "Alex Turner",
+    "Damon Albarn", "Noel Gallagher", "Kevin Parker", "Dan Auerbach",
+    "Julian Casablancas", "St. Vincent",
+    # Garage / Psych
+    "Ty Segall", "John Dwyer",
+    # Metal
+    "Tony Iommi", "Ozzy Osbourne", "James Hetfield", "Lemmy", "Dave Mustaine",
+    # R&B / Soul / Funk
+    "Prince", "Stevie Wonder", "Michael Jackson", "James Brown",
+    # Singer-Songwriters
+    "Bob Dylan", "Tom Waits", "Nick Cave", "Johnny Cash",
+    "Kate Bush", "Björk", "PJ Harvey",
+    # Producers
+    "Brian Eno", "Rick Rubin", "Danger Mouse", "Nigel Godrich",
+    "Jack Antonoff", "Mark Ronson", "Quincy Jones", "Butch Vig",
+    # Iconic Bands
+    "Led Zeppelin", "The Rolling Stones", "Pink Floyd", "The Beatles",
+    "Queen", "The Who", "Fleetwood Mac", "Nirvana", "Foo Fighters",
+    "Soundgarden", "Pearl Jam", "Red Hot Chili Peppers", "Radiohead",
+    "Arctic Monkeys", "Queens of the Stone Age", "The Strokes",
+    "The Black Keys", "Oasis", "Blur", "Gorillaz", "Metallica",
+    "Black Sabbath", "Iron Maiden", "AC/DC", "The Clash", "Joy Division",
+    "New Order", "The Cure", "Rage Against the Machine", "Nine Inch Nails",
+    "Tool", "OutKast", "Wu-Tang Clan", "A Tribe Called Quest", "The Roots",
+    "N.W.A", "Beastie Boys", "Daft Punk", "Massive Attack", "Tame Impala",
+    "LCD Soundsystem", "Arcade Fire", "The White Stripes", "Osees",
+    "King Gizzard & the Lizard Wizard", "Earth, Wind & Fire",
+    "Talking Heads", "Depeche Mode", "Kraftwerk",
+]
+
+CURATED_HOPS = 6
+CONCERTDB_HOPS = int(os.environ.get("CONCERTDB_HOPS") or 6)
+CONCERTDB_LEDGER = Path(os.environ.get("CONCERTDB_LEDGER")
+                        or Path.home() / "concert-database" / "data" / "ledger.sqlite")
+# The browser download (graph.db.gz). If the graph comes out bigger, it is rebuilt
+# with fewer hops around concert-database's artists (Supabase keeps them all and
+# answers for the rest). Leaves room for add_concertdb_edges.py's opened_for edges.
+MAX_GZIP_MB = 49.5
+
+TYPE_MAP = {"1": "person", "2": "group", "3": "group", "4": "group", "5": "person", "6": "person"}
 
 
-def collapse_credits_to_collaborator_edges(
-    album_credits: list[tuple[str, str, str]],
-    reachable_gids: set[str],
-) -> list[tuple[str, str]]:
-    """
-    Collapse album co-credits into direct person<->person "collaborator" edges.
-
-    Two artists who both have a credit on the same album (release group) are
-    collaborators. This replaces album nodes + per-credit edges with a single
-    undirected edge per collaborating pair, greatly shrinking the graph and
-    removing high-degree album nodes (so the runtime compilation filter is no
-    longer needed).
-
-    Only pairs where BOTH endpoints are reachable are emitted. Returns a list of
-    (gid_a, gid_b) with gid_a < gid_b (deduped, undirected).
-    """
-    print("Collapsing album credits into collaborator edges...")
-
-    # album_gid -> set of reachable contributor gids
-    album_contributors: dict[str, set[str]] = defaultdict(set)
-    for artist_gid, album_gid, _credit_type in album_credits:
-        if artist_gid in reachable_gids:
-            album_contributors[album_gid].add(artist_gid)
-
-    pairs: set[tuple[str, str]] = set()
-    skipped_big = 0
-    for album_gid, contributors in album_contributors.items():
-        if len(contributors) < 2:
-            continue
-        if len(contributors) > MAX_COLLAB_CONTRIBUTORS:
-            # Guard against pair explosion on unusually crowded albums.
-            skipped_big += 1
-            continue
-        ordered = sorted(contributors)
-        for i in range(len(ordered)):
-            for j in range(i + 1, len(ordered)):
-                pairs.add((ordered[i], ordered[j]))
-
-    print(f"  Skipped {skipped_big} albums with >{MAX_COLLAB_CONTRIBUTORS} contributors")
-    print(f"  Collaborator edges: {len(pairs)}")
-    return list(pairs)
+def node_type(raw_type: str | None) -> str:
+    """MusicBrainz artist type id -> "person" | "group"."""
+    return TYPE_MAP.get(raw_type, "person") if raw_type else "person"
 
 
-# Maximum hops from seed artists to include in the browser SQLite
-MAX_HOPS = 6
+def resolve_curated_seeds(artists: dict[int, dict]) -> set[str]:
+    name_to_gid = {data["name"].lower(): data["gid"] for data in artists.values()}
+    seeds = set()
+    for name in SEED_ARTIST_NAMES:
+        gid = name_to_gid.get(name.lower())
+        if gid:
+            seeds.add(gid)
+        else:
+            print(f"  WARNING: Seed artist not found in dump: {name}")
+    print(f"  Curated seeds: {len(seeds)} / {len(SEED_ARTIST_NAMES)}")
+    return seeds
+
+
+def concertdb_seeds(ledger: Path, artists: dict[int, dict]) -> set[str]:
+    """MusicBrainz IDs of artists with at least one concert in the concert-database
+    ledger (read-only). Empty, with a warning, if there is no ledger."""
+    import sqlite3
+
+    if not ledger.exists():
+        print(f"  WARNING: no concert-database ledger at {ledger}: curated seeds only"
+              " (set CONCERTDB_LEDGER)")
+        return set()
+    conn = sqlite3.connect(f"file:{ledger}?mode=ro", uri=True)
+    try:
+        mbids = {r[0] for r in conn.execute(
+            "SELECT DISTINCT a.mbid FROM billings b JOIN artists a ON a.id = b.artist_id"
+            " WHERE a.mbid IS NOT NULL")}
+    finally:
+        conn.close()
+    known = {data["gid"] for data in artists.values()}
+    seeds = mbids & known
+    print(f"  concert-database seeds: {len(seeds)} artists with concerts ({len(mbids) - len(seeds)} not in this dump)")
+    return seeds
+
+
+def seed_budgets(curated: set[str], concert: set[str], concert_hops: int) -> dict[str, int]:
+    budgets = {gid: concert_hops for gid in concert}
+    for gid in curated:
+        budgets[gid] = max(budgets.get(gid, 0), CURATED_HOPS)
+    return budgets
 
 
 def bfs_reachable(
-    seed_gids: set[str],
-    relationships: list[tuple[int, int, str]],
+    budgets: dict[str, int],
+    relationships: list[tuple[int, int, str, bool]],
     artists: dict[int, dict],
-    max_hops: int,
 ) -> set[str]:
-    """
-    BFS from seed artist GIDs through member_of/support_musician edges.
-    Returns set of all reachable artist GIDs within max_hops.
-    """
-    print(f"  Running BFS from {len(seed_gids)} seed artists (max {max_hops} hops)...")
-
-    # Build adjacency list using internal IDs for speed
-    # First build gid → internal_id mapping
-    gid_to_id = {}
-    id_to_gid_map = {}
-    for aid, data in artists.items():
-        gid_to_id[data["gid"]] = aid
-        id_to_gid_map[aid] = data["gid"]
-
+    """Every artist within some seed's hop budget over band relationships
+    (member of / supporting musician). budgets: seed MBID -> hops."""
+    gid_to_id = {data["gid"]: aid for aid, data in artists.items()}
     adjacency: dict[int, set[int]] = defaultdict(set)
     for e0, e1, _, _ in relationships:
         adjacency[e0].add(e1)
         adjacency[e1].add(e0)
 
-    # BFS
-    seed_ids = set()
-    for gid in seed_gids:
+    # A node keeps the largest budget it is reached with; expand from the biggest first.
+    best: dict[int, int] = {}
+    for gid, hops in budgets.items():
         aid = gid_to_id.get(gid)
         if aid is not None:
-            seed_ids.add(aid)
+            best[aid] = max(best.get(aid, -1), hops)
+    buckets: dict[int, set[int]] = defaultdict(set)
+    for aid, hops in best.items():
+        buckets[hops].add(aid)
+    for hops in range(max(buckets, default=0), 0, -1):
+        for aid in buckets.pop(hops, ()):
+            if best.get(aid) != hops:
+                continue
+            for neighbor in adjacency.get(aid, ()):
+                if best.get(neighbor, -1) < hops - 1:
+                    best[neighbor] = hops - 1
+                    buckets[hops - 1].add(neighbor)
 
-    print(f"  Resolved {len(seed_ids)} seed artists to internal IDs")
+    reachable = {artists[aid]["gid"] for aid in best}
+    print(f"  BFS from {len(budgets)} seeds: {len(reachable)} artists")
+    return reachable
 
-    visited = set(seed_ids)
-    frontier = set(seed_ids)
 
-    for hop in range(max_hops):
-        next_frontier = set()
-        for node in frontier:
-            for neighbor in adjacency.get(node, set()):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    next_frontier.add(neighbor)
-        frontier = next_frontier
-        print(f"    Hop {hop + 1}: +{len(next_frontier)} nodes (total: {len(visited)})")
-        if not next_frontier:
-            print(f"    No more nodes reachable at hop {hop + 1}, stopping.")
-            break
-
-    # Convert back to GIDs
-    reachable_gids = set()
-    for aid in visited:
-        gid = id_to_gid_map.get(aid)
-        if gid:
-            reachable_gids.add(gid)
-
-    print(f"  BFS complete: {len(reachable_gids)} reachable artists")
-    return reachable_gids
+def band_edges(relationships, artists, reachable_gids):
+    """(source MBID, target MBID, rel_type) for band relationships between reachable
+    artists, deduplicated. A membership is current if ANY of its MusicBrainz
+    relationships hasn't ended (so Dave Grohl isn't a former member of Foo Fighters)."""
+    id_to_gid = {aid: data["gid"] for aid, data in artists.items() if data["gid"] in reachable_gids}
+    current: dict[tuple[str, str], bool] = {}
+    for e0, e1, rel_type, ended in relationships:
+        if rel_type == "member of band" and e0 in id_to_gid and e1 in id_to_gid:
+            key = (id_to_gid[e0], id_to_gid[e1])
+            current[key] = current.get(key, False) or not ended
+    seen = set()
+    for e0, e1, rel_type, ended in relationships:
+        gid0, gid1 = id_to_gid.get(e0), id_to_gid.get(e1)
+        if not gid0 or not gid1:
+            continue
+        if rel_type == "member of band":
+            mapped = "member_of" if current[(gid0, gid1)] else "former_member_of"
+        else:
+            mapped = "support_musician"
+        key = (gid0, gid1, mapped)
+        if key not in seen:
+            seen.add(key)
+            yield key
 
 
 def build_graph(
     artists: dict[int, dict],
-    relationships: list[tuple[int, int, str]],
-    album_credits: list[tuple[str, str, str]],
+    relationships: list[tuple[int, int, str, bool]],
+    collaborations: dict[tuple[str, str, str], int],
     reachable_gids: set[str],
     output_path: Path,
+    meta: dict[str, str] | None = None,
 ):
     """
-    Build unified graph and write to SQLite.
-    Only includes nodes/edges where at least one endpoint is in reachable_gids.
-
-    Album nodes are NOT emitted. Album co-credits are collapsed into direct
-    person<->person "collaborator" edges (see collapse_credits_to_collaborator_edges),
-    which removes high-degree album nodes and shrinks the file.
+    Write the browser SQLite graph: reachable artists, band edges between them,
+    and collaborations where both artists are reachable.
 
     Schema:
         nodes(id TEXT PRIMARY KEY, name TEXT, type TEXT, disambiguation TEXT, area TEXT)
-            type: "person", "group"
-            disambiguation/area: NULL when MusicBrainz has none
+            type: "person", "group"; disambiguation/area NULL when MusicBrainz has none
         edges(source TEXT, target TEXT, rel_type TEXT)
-            rel_type: "member_of", "former_member_of", "support_musician", "collaborator"
+            rel_type: "member_of", "former_member_of", "support_musician",
+                      "collaborated_with", "produced_for" (credited artist -> album artist)
+        graph_meta(key TEXT PRIMARY KEY, value TEXT)
         + indexes
     """
     import sqlite3
 
-    print("Building graph...")
-
-    type_map = {"1": "person", "2": "group", "3": "group", "4": "group", "5": "person", "6": "person"}
-    edge_type_map = {
-        "member of band": "member_of",
-        "supporting musician": "support_musician",
-    }
-
-    id_to_gid = {}
-    for aid, data in artists.items():
-        if data["gid"] in reachable_gids:
-            id_to_gid[aid] = data["gid"]
-
-    print(f"  Reachable artists: {len(reachable_gids)}")
-
-    # Collapse album credits into person<->person collaborator edges.
-    collaborator_pairs = collapse_credits_to_collaborator_edges(album_credits, reachable_gids)
-
-    # Write SQLite
+    print(f"Building graph: {len(reachable_gids)} artists...")
     if output_path.exists():
         output_path.unlink()
-
-    print(f"  Writing SQLite database: {output_path}")
     conn = sqlite3.connect(str(output_path))
     cur = conn.cursor()
-
-    cur.execute("PRAGMA journal_mode=WAL")
     cur.execute("PRAGMA synchronous=OFF")
+    cur.execute("CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL,"
+                " disambiguation TEXT, area TEXT)")
+    cur.execute("CREATE TABLE edges (source TEXT NOT NULL, target TEXT NOT NULL, rel_type TEXT NOT NULL)")
+    cur.execute("CREATE TABLE graph_meta (key TEXT PRIMARY KEY, value TEXT)")
 
-    cur.execute("""
-        CREATE TABLE nodes (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            type TEXT NOT NULL,
-            disambiguation TEXT,
-            area TEXT
-        )
-    """)
+    cur.executemany(
+        "INSERT OR IGNORE INTO nodes (id, name, type, disambiguation, area) VALUES (?, ?, ?, ?, ?)",
+        ((d["gid"], d["name"], node_type(d["type"]), d["disambiguation"], d["area"])
+         for d in artists.values() if d["gid"] in reachable_gids))
+    node_count = cur.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
 
-    cur.execute("""
-        CREATE TABLE edges (
-            source TEXT NOT NULL,
-            target TEXT NOT NULL,
-            rel_type TEXT NOT NULL
-        )
-    """)
+    cur.executemany("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
+                    band_edges(relationships, artists, reachable_gids))
+    cur.executemany("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
+                    ((a, b, rel) for (a, b, rel) in collaborations
+                     if a in reachable_gids and b in reachable_gids))
+    edge_count = cur.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    cur.executemany("INSERT INTO graph_meta (key, value) VALUES (?, ?)", (meta or {}).items())
 
-    # Insert artist nodes (only reachable). No album nodes.
-    node_count = 0
-    for aid, data in artists.items():
-        if data["gid"] in reachable_gids:
-            name = data["name"]
-            node_type = type_map.get(data["type"], "person") if data["type"] else "person"
-            cur.execute(
-                "INSERT OR IGNORE INTO nodes (id, name, type, disambiguation, area) VALUES (?, ?, ?, ?, ?)",
-                (data["gid"], name, node_type, data["disambiguation"], data["area"]),
-            )
-            node_count += 1
-
-    # Insert artist-artist edges (deduplicated in Python)
-    edge_count = 0
-    seen_edges = set()
-
-    # Deduplicate memberships: if any relationship for (person, band) is not ended, treat as current
-    membership_status: dict[tuple[str, str], bool] = {}  # (gid0, gid1) → is_current
-    for e0, e1, rel_type, ended in relationships:
-        if rel_type != "member of band":
-            continue
-        gid0 = id_to_gid.get(e0)
-        gid1 = id_to_gid.get(e1)
-        if not gid0 or not gid1:
-            continue
-        key = (gid0, gid1)
-        if key in membership_status:
-            # If any relationship is not ended, mark as current
-            if not ended:
-                membership_status[key] = True
-        else:
-            membership_status[key] = not ended
-
-    for e0, e1, rel_type, ended in relationships:
-        gid0 = id_to_gid.get(e0)
-        gid1 = id_to_gid.get(e1)
-        if gid0 and gid1:
-            mapped_type = edge_type_map.get(rel_type, rel_type)
-            if mapped_type == "member_of":
-                # Use the deduplicated status
-                pair_key = (gid0, gid1)
-                is_current = membership_status.get(pair_key, not ended)
-                if not is_current:
-                    mapped_type = "former_member_of"
-            key = (gid0, gid1, mapped_type)
-            if key not in seen_edges:
-                seen_edges.add(key)
-                cur.execute("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)", (gid0, gid1, mapped_type))
-                edge_count += 1
-
-    # Insert collaborator edges (collapsed album co-credits). Undirected, deduped.
-    for gid_a, gid_b in collaborator_pairs:
-        key = (gid_a, gid_b, "collaborator")
-        if key not in seen_edges:
-            seen_edges.add(key)
-            cur.execute("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
-                        (gid_a, gid_b, "collaborator"))
-            edge_count += 1
-
-    # Create indexes
     print("  Creating indexes...")
     cur.execute("CREATE INDEX idx_edges_source ON edges(source)")
     cur.execute("CREATE INDEX idx_edges_target ON edges(target)")
     cur.execute("CREATE INDEX idx_edges_rel_type ON edges(rel_type)")
     cur.execute("CREATE INDEX idx_nodes_name ON nodes(name COLLATE NOCASE)")
     cur.execute("CREATE INDEX idx_nodes_type ON nodes(type)")
-
     conn.commit()
+    conn.execute("VACUUM")
     conn.close()
-
     print(f"  Output: {node_count} nodes, {edge_count} edges")
     return node_count, edge_count
 
 
+def load_graph_inputs():
+    """Everything both the browser graph and seed_supabase.py are built from."""
+    link_types = parse_link_types(DATA_DIR)
+    aa_ids = {t for t, n in link_types.items() if n in RELEVANT_ARTIST_ARTIST_TYPES}
+    ar_ids = {t for t, n in link_types.items() if n in RELEVANT_ARTIST_RECORDING_TYPES}
+    if not aa_ids:
+        raise RuntimeError("Could not find relevant artist-artist relationship types.")
+    links = parse_links(DATA_DIR)
+    artists = parse_artists(DATA_DIR, parse_areas(DATA_DIR))
+    relationships = parse_artist_relationships(DATA_DIR, links, link_types, aa_ids)
+    credits = parse_artist_recording_relationships(DATA_DIR, links, link_types, ar_ids)
+    recording_to_rg, release_groups = build_recording_to_release_group(DATA_DIR)
+    credit_to_artist = parse_artist_credit_name(DATA_DIR)
+    collaborations = build_collaborations(credits, recording_to_rg, release_groups, credit_to_artist, artists)
+    del credits, recording_to_rg, release_groups, credit_to_artist
+    print()
+    curated = resolve_curated_seeds(artists)
+    concert = concertdb_seeds(CONCERTDB_LEDGER, artists)
+    return artists, relationships, collaborations, curated, concert
+
+
 def main():
+    import argparse
+    from datetime import datetime, timezone
+
+    ap = argparse.ArgumentParser(description="Build public/graph.db.gz from the MusicBrainz dump")
+    ap.add_argument("--concertdb-hops", type=int, default=CONCERTDB_HOPS,
+                    help="hops around concert-database's artists (lowered automatically to fit --max-gzip-mb)")
+    ap.add_argument("--max-gzip-mb", type=float, default=MAX_GZIP_MB)
+    args = ap.parse_args()
+
     print("=" * 60)
     print("MusicBrainz Dump Processor")
     print("=" * 60)
-    print()
-
-    # Step 1: Get dump URL
-    try:
-        dump_url = get_latest_dump_url()
-        print(f"Latest dump: {dump_url}")
-    except Exception as e:
-        print(f"Error finding latest dump: {e}")
-        print("You can manually set the dump URL in the script.")
-        print("Check https://data.metabrainz.org/pub/musicbrainz/data/fullexport/")
-        return
-
-    # Step 2: Download needed tables
-    print()
+    dump_url = get_latest_dump_url()
+    print(f"Latest dump: {dump_url}")
     download_dump_tables(dump_url)
-
-    # Step 3: Parse link types
     print()
-    link_types = parse_link_types(DATA_DIR)
+    artists, relationships, collaborations, curated, concert = load_graph_inputs()
 
-    # Find IDs of relationship types we care about
-    relevant_artist_artist_ids = set()
-    relevant_artist_recording_ids = set()
-    for type_id, type_name in link_types.items():
-        if type_name in RELEVANT_ARTIST_ARTIST_TYPES:
-            relevant_artist_artist_ids.add(type_id)
-            print(f"  Artist-artist type: {type_name} (id={type_id})")
-        if type_name in RELEVANT_ARTIST_RECORDING_TYPES:
-            relevant_artist_recording_ids.add(type_id)
-            print(f"  Artist-recording type: {type_name} (id={type_id})")
-
-    if not relevant_artist_artist_ids:
-        print("ERROR: Could not find relevant artist-artist relationship types.")
-        return
-
-    # Step 4: Parse links
-    print()
-    links = parse_links(DATA_DIR)
-
-    # Step 5: Parse artists
-    print()
-    areas = parse_areas(DATA_DIR)
-    artists = parse_artists(DATA_DIR, areas)
-
-    # Step 6: Parse artist-artist relationships
-    print()
-    relationships = parse_artist_relationships(DATA_DIR, links, link_types, relevant_artist_artist_ids)
-
-    # Step 7: Parse recording credits (if tables exist)
-    album_credits = []
-    rec_table = DATA_DIR / "mbdump" / "l_artist_recording"
-    if rec_table.exists() and relevant_artist_recording_ids:
-        print()
-        artist_recording_rels = parse_artist_recording_relationships(
-            DATA_DIR, links, link_types, relevant_artist_recording_ids
-        )
-
-        print()
-        recording_to_rg, release_groups = build_recording_to_release_group(DATA_DIR)
-
-        print()
-        album_credits = flatten_recording_credits_to_album_credits(
-            artist_recording_rels, recording_to_rg, release_groups, artists
-        )
-    else:
-        print("\n  Skipping recording credits (tables not extracted)")
-
-    # Step 8: BFS from seed artists to find reachable nodes
-    print()
-    print("Resolving seed artists...")
-    # Seed artists from src/game/artists.ts (names)
-    SEED_ARTIST_NAMES = [
-        # Modern Pop / Hip Hop / R&B
-        "Bruno Mars", "The Weeknd", "Rihanna", "Taylor Swift", "Lady Gaga",
-        "Ariana Grande", "Drake", "Billie Eilish", "Kendrick Lamar", "Post Malone",
-        "Kanye West", "Beyoncé", "Frank Ocean", "Tyler, the Creator",
-        "Pharrell Williams", "Jay-Z", "Snoop Dogg", "Dr. Dre", "André 3000",
-        "Nas", "MF DOOM", "Madlib", "RZA", "Q-Tip", "Lauryn Hill",
-        "Missy Elliott", "Justin Timberlake", "D'Angelo", "Erykah Badu",
-        "Anderson .Paak", "Thundercat", "Flying Lotus",
-        # Classic Rock
-        "Jimmy Page", "Robert Plant", "John Paul Jones", "Mick Jagger",
-        "Keith Richards", "David Bowie", "Paul McCartney", "George Harrison",
-        "Eric Clapton", "Jimi Hendrix", "Roger Waters", "David Gilmour",
-        "Freddie Mercury", "Brian May", "Pete Townshend", "Neil Young",
-        "Stevie Nicks", "Peter Gabriel", "Phil Collins",
-        # Punk / Post-Punk
-        "Iggy Pop", "Joe Strummer", "Robert Smith", "David Byrne",
-        # Grunge / 90s Alt
-        "Dave Grohl", "Chris Cornell", "Eddie Vedder", "Billy Corgan",
-        "Trent Reznor", "Flea", "John Frusciante", "Tom Morello",
-        # Indie / Alternative
-        "Thom Yorke", "Jack White", "Josh Homme", "Alex Turner",
-        "Damon Albarn", "Noel Gallagher", "Kevin Parker", "Dan Auerbach",
-        "Julian Casablancas", "St. Vincent",
-        # Garage / Psych
-        "Ty Segall", "John Dwyer",
-        # Metal
-        "Tony Iommi", "Ozzy Osbourne", "James Hetfield", "Lemmy", "Dave Mustaine",
-        # R&B / Soul / Funk
-        "Prince", "Stevie Wonder", "Michael Jackson", "James Brown",
-        # Singer-Songwriters
-        "Bob Dylan", "Tom Waits", "Nick Cave", "Johnny Cash",
-        "Kate Bush", "Björk", "PJ Harvey",
-        # Producers
-        "Brian Eno", "Rick Rubin", "Danger Mouse", "Nigel Godrich",
-        "Jack Antonoff", "Mark Ronson", "Quincy Jones", "Butch Vig",
-        # Iconic Bands
-        "Led Zeppelin", "The Rolling Stones", "Pink Floyd", "The Beatles",
-        "Queen", "The Who", "Fleetwood Mac", "Nirvana", "Foo Fighters",
-        "Soundgarden", "Pearl Jam", "Red Hot Chili Peppers", "Radiohead",
-        "Arctic Monkeys", "Queens of the Stone Age", "The Strokes",
-        "The Black Keys", "Oasis", "Blur", "Gorillaz", "Metallica",
-        "Black Sabbath", "Iron Maiden", "AC/DC", "The Clash", "Joy Division",
-        "New Order", "The Cure", "Rage Against the Machine", "Nine Inch Nails",
-        "Tool", "OutKast", "Wu-Tang Clan", "A Tribe Called Quest", "The Roots",
-        "N.W.A", "Beastie Boys", "Daft Punk", "Massive Attack", "Tame Impala",
-        "LCD Soundsystem", "Arcade Fire", "The White Stripes", "Osees",
-        "King Gizzard & the Lizard Wizard", "Earth, Wind & Fire",
-        "Talking Heads", "Depeche Mode", "Kraftwerk",
-    ]
-
-    # Resolve seed names to GIDs
-    name_to_gid = {}
-    for aid, data in artists.items():
-        lower_name = data["name"].lower()
-        name_to_gid[lower_name] = data["gid"]
-
-    seed_gids = set()
-    for name in SEED_ARTIST_NAMES:
-        gid = name_to_gid.get(name.lower())
-        if gid:
-            seed_gids.add(gid)
-        else:
-            print(f"  WARNING: Seed artist not found in dump: {name}")
-
-    print(f"  Resolved {len(seed_gids)} / {len(SEED_ARTIST_NAMES)} seed artists")
-
-    reachable_gids = bfs_reachable(seed_gids, relationships, artists, MAX_HOPS)
-
-    # Step 9: Build and export SQLite graph
-    print()
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    node_count, edge_count = build_graph(artists, relationships, album_credits, reachable_gids, OUTPUT_FILE)
-
-    file_size = OUTPUT_FILE.stat().st_size / (1024 * 1024)
-    print()
-    print(f"Written to: {OUTPUT_FILE}")
-    print(f"File size: {file_size:.1f} MB")
-
-    # Also write a gzipped version for serving
     gz_path = OUTPUT_FILE.with_suffix(".db.gz")
-    print(f"Compressing to: {gz_path.name}")
-    with open(OUTPUT_FILE, "rb") as f_in:
-        with gzip.open(gz_path, "wb") as f_out:
+    for hops in range(args.concertdb_hops, -1, -1):
+        print(f"\nconcert-database artists at {hops} hops (curated seeds at {CURATED_HOPS}):")
+        reachable = bfs_reachable(seed_budgets(curated, concert, hops), relationships, artists)
+        meta = {"built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                "musicbrainz_dump": dump_url.rsplit("/", 1)[-1], "curated_seeds": str(len(curated)),
+                "curated_hops": str(CURATED_HOPS), "concertdb_seeds": str(len(concert)),
+                "concertdb_hops": str(hops)}
+        node_count, edge_count = build_graph(artists, relationships, collaborations, reachable, OUTPUT_FILE, meta)
+        with open(OUTPUT_FILE, "rb") as f_in, gzip.open(gz_path, "wb", compresslevel=9) as f_out:
             shutil.copyfileobj(f_in, f_out)
-
-    gz_size = gz_path.stat().st_size / (1024 * 1024)
-    print(f"Compressed size: {gz_size:.1f} MB")
+        gz_mb = gz_path.stat().st_size / 1e6
+        print(f"  graph.db.gz: {gz_mb:.1f} MB (limit {args.max_gzip_mb} MB)")
+        if gz_mb <= args.max_gzip_mb or not concert:
+            break
+        print("  Too big for the browser download: one hop fewer around concert-database's artists")
 
     print()
     print("=" * 60)
-    print("Done!")
-    print(f"  Nodes: {node_count}")
-    print(f"  Edges: {edge_count}")
-    print(f"  SQLite: {file_size:.1f} MB")
-    print(f"  Gzipped: {gz_size:.1f} MB")
+    print(f"Done: {node_count} nodes, {edge_count} edges, concert-database hops {hops}")
+    print(f"  SQLite: {OUTPUT_FILE.stat().st_size / 1e6:.1f} MB, gzipped: {gz_mb:.1f} MB")
+    print("  Next: python3 scripts/add_concertdb_edges.py (opened_for edges)")
     print("=" * 60)
 
 

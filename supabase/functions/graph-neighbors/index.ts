@@ -19,7 +19,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
  * Response:
  *   { found: boolean,
  *     artist: { id, name, type } | null,
- *     neighbors: [{ node: { id, name, type }, relType: string }] }
+ *     neighbors: [{ node: { id, name, type }, relType: string, outgoing: boolean }] }
+ *   (outgoing: the artist is the edge's source, e.g. the producer in produced_for)
  *
  * Search mode, for the app's artist dropdowns (no neighbors, never logs: a
  * partial name typed into a dropdown isn't a lookup that missed):
@@ -44,20 +45,16 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-// Relationship types we expose as artist-to-artist edges. Album-credit rel types
-// are included because the client collapses album co-credits into collaborator
-// edges; here they surface directly as the neighbor's rel_type.
+// Relationship types we expose as artist-to-artist edges. Collaborations point
+// from the credited artist to the record's artist (seed_supabase.py); the
+// response says which way each edge points (`outgoing`).
 const ARTIST_REL_TYPES = new Set([
   "member_of",
   "former_member_of",
   "support_musician",
-  "collaborator",
-  "producer",
-  "vocal",
-  "instrument",
-  "mix",
-  "engineer",
-  "recording",
+  "collaborated_with",
+  "produced_for",
+  "opened_for",
 ]);
 
 // Search candidates fetched per pattern before ranking.
@@ -180,11 +177,12 @@ serve(async (req) => {
     const rels = (edges ?? []).filter((e) => ARTIST_REL_TYPES.has(e.rel_type));
 
     // Collect neighbor ids (the other end of each edge) + their rel_type.
-    const neighborRel = new Map<string, string>();
+    const neighborRel = new Map<string, { relType: string; outgoing: boolean }>();
     for (const e of rels) {
-      const neighborId = e.source_id === artist.mbid ? e.target_id : e.source_id;
+      const outgoing = e.source_id === artist.mbid;
+      const neighborId = outgoing ? e.target_id : e.source_id;
       if (neighborId === artist.mbid) continue;
-      if (!neighborRel.has(neighborId)) neighborRel.set(neighborId, e.rel_type);
+      if (!neighborRel.has(neighborId)) neighborRel.set(neighborId, { relType: e.rel_type, outgoing });
     }
 
     // 3. Resolve neighbor artist rows (chunked to avoid oversized IN lists).
@@ -202,9 +200,9 @@ serve(async (req) => {
 
     const neighbors = [...neighborRel.entries()]
       .filter(([id]) => nodes.has(id))
-      .map(([id, relType]) => {
+      .map(([id, { relType, outgoing }]) => {
         const n = nodes.get(id)!;
-        return { node: { id: n.mbid, name: n.name, type: n.type }, relType };
+        return { node: { id: n.mbid, name: n.name, type: n.type }, relType, outgoing };
       });
 
     return json({

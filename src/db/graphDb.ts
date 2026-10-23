@@ -166,12 +166,14 @@ export function findNodeById(id: string): NodeRecord | null {
 }
 
 /**
- * Get all neighbors of a node (both directions).
+ * Get all neighbors of a node (both directions). `outgoing` says which way the
+ * edge points: true when nodeId is its source. Most relationships read the same
+ * either way; "opened_for" goes opener -> headliner.
  */
-export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType: string }> {
+export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType: string; outgoing: boolean }> {
   if (!db) return [];
 
-  const results: Array<{ node: NodeRecord; relType: string }> = [];
+  const results: Array<{ node: NodeRecord; relType: string; outgoing: boolean }> = [];
 
   // Edges where this node is the source
   const stmt1 = db.prepare(
@@ -183,6 +185,7 @@ export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType:
     results.push({
       node: { id: row[0] as string, name: row[1] as string, type: row[2] as string },
       relType: row[3] as string,
+      outgoing: true,
     });
   }
   stmt1.free();
@@ -197,6 +200,7 @@ export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType:
     results.push({
       node: { id: row[0] as string, name: row[1] as string, type: row[2] as string },
       relType: row[3] as string,
+      outgoing: false,
     });
   }
   stmt2.free();

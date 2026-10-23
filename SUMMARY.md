@@ -21,11 +21,21 @@ Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Disc
 ```
 Data pipeline (offline, run manually):
     MusicBrainz full dump (~4GB)
-        → Python script extracts artists, relationships, recording credits
-        → BFS from ~145 seed artists (6 hops via member_of/support_musician)
+        → Python script extracts artists, band relationships, producer/vocal/instrument credits
+        → Seeds: ~145 curated artists (6 hops) + every artist with a concert in the
+          concert-database ledger (CONCERTDB_HOPS, default 6), BFS via member_of/support_musician
         → Deduplicates memberships (any active = current, not former)
-        → SQLite database: nodes (persons, groups, albums) + edges
-        → Output: public/graph.db.gz (~39MB, committed to repo; also uploaded to R2 for Cloudflare)
+        → Credits on another artist's record → one edge per role from the credited artist
+          to the record's artist: produced_for, collaborated_with (no album nodes)
+        → SQLite database: nodes (persons, groups) + edges + graph_meta
+        → If graph.db.gz > 49.5 MB: rebuilt with one hop fewer around concert-database's
+          artists until it fits (Supabase keeps the full set)
+        → Output: public/graph.db.gz (~49MB, committed to repo; also uploaded to R2 for Cloudflare)
+        → seed_supabase.py writes the same artists and edges (uncut) to Postgres
+    concert-database ledger (~/concert-database/data/ledger.sqlite, read-only)
+        → scripts/add_concertdb_edges.py adds opener → headliner "opened_for" edges
+          (same pairs as `concertdb export --musicbrainz-only`), adding acts that
+          aren't in the graph as nodes; re-runnable, replaces its previous edges
 
 App loading (lazy, non-blocking):
     UI renders immediately; main.tsx calls preloadDb() once the browser is idle
@@ -33,7 +43,8 @@ App loading (lazy, non-blocking):
         → Auto-detects gzip (magic number 1f8b) and decompresses if needed
         → sql.js opens the SQLite database in WASM
         → From then on queries are local, instant (<50ms)
-    Until it has loaded, lookups go to Postgres instead (same dataset):
+    Until it has loaded, lookups go to Postgres instead (the same artists, plus any the
+    browser graph had to leave out to fit its size budget):
         → src/db/graphSource.ts: findArtist / findArtistById / getArtistNeighbors
           call the graph-neighbors edge function with log=0 (no search_misses rows)
         → Explore search, Discover's related-band BFS, Similarity and Concerts
@@ -93,10 +104,12 @@ Similarity mode (artist-to-scene fit scoring):
     User enters a list of artists + one target artist to compare
         → Loads browser SQLite (same DB as Explore/Play)
         → For each list artist, collects connections to the target across ALL
-          relationships: direct edges, shared neighbors, and shared album credits
+          relationships: direct edges and shared neighbors (bandmates, collaborators,
+          shared headliners); album-credit scoring (albumCreditWeight) only applies
+          to album nodes, which current graphs don't have
         → Each connection weighted by relationship type (REL_WEIGHTS):
-          member_of > former_member_of > support_musician; album credits scored
-          by shared-credit count (albumCreditWeight, diminishing returns)
+          member_of > former_member_of > support_musician > collaborated_with >
+          produced_for / opened_for
         → Per-pair score = 70% connection strength + 30% BFS proximity (all rels)
         → Overall = 60% best pair + 40% average (rewards multiple independent paths)
         → Fully client-side; no backend. Weights are placeholders, tunable in similarity.ts
@@ -205,10 +218,13 @@ src/
 └── index.css             — Dark theme, mobile styles (max-width: 640px block), highlight animation.
 
 scripts/
-├── process_mb_dump.py    — Downloads MusicBrainz dump, builds browser SQLite graph.
-│                           Emits person/group nodes + band edges + collapsed "collaborator"
-│                           edges (album nodes removed; see collapse_credits_to_collaborator_edges).
-├── seed_supabase.py      — Seeds Supabase Postgres with MusicBrainz data (BFS-filtered).
+├── process_mb_dump.py    — Downloads MusicBrainz dump, builds browser SQLite graph: curated + concert-database
+│                           seeds, person/group nodes, band edges, produced_for / collaborated_with edges
+│                           (build_collaborations). Fits the download to MAX_GZIP_MB. load_graph_inputs() is
+│                           shared with seed_supabase.py.
+├── add_concertdb_edges.py — Adds "opened_for" edges (opener → headliner) to graph.db.gz from the
+│                           concert-database ledger. Run after process_mb_dump.py.
+├── seed_supabase.py      — Seeds Supabase Postgres with the same artists and edges, uncut (--dry-run counts rows).
 ├── crawl_setlistfm.py    — Daily crawl job for Setlist.fm venue data.
 └── README.md             — Script documentation.
 
@@ -224,7 +240,9 @@ supabase/
 │   ├── 001_schema.sql    — PostgreSQL schema (artists, albums, venues, relationships).
 │   ├── 002_crawl_log.sql — Data freshness tracking.
 │   ├── 003_search_misses.sql — Unknown artist query logging.
-│   └── 004_artist_search.sql — pg_trgm index on artists.name, artists.area column.
+│   ├── 004_artist_search.sql — pg_trgm index on artists.name, artists.area column.
+│   └── 005_collaborations.sql — Drops albums + per-album credit rows and two redundant indexes
+│                           (then VACUUM FULL relationships; re-seed; redeploy graph-neighbors).
 ├── config.toml           — Supabase project config.
 └── README.md             — Deployment instructions.
 
@@ -233,7 +251,7 @@ docs/
 └── SPACE_SAVING.md       — Ideas for reducing database storage if needed.
 
 public/
-├── graph.db.gz           — Precomputed SQLite graph (committed, ~38MB).
+├── graph.db.gz           — Precomputed SQLite graph (committed, ~49MB).
 ├── .assetsignore         — Keeps graph.db.gz out of the Cloudflare upload (25 MiB asset cap).
 └── sql-wasm.wasm         — sql.js WASM binary (committed, ~660KB).
 
@@ -250,7 +268,7 @@ CLAUDE.md                 — Instructions for Claude Code sessions (imports thi
 CREATE TABLE nodes (
     id TEXT PRIMARY KEY,    -- MusicBrainz GID
     name TEXT NOT NULL,
-    type TEXT NOT NULL,     -- "person", "group", "album"
+    type TEXT NOT NULL,     -- "person", "group"
     disambiguation TEXT,    -- MusicBrainz comment, e.g. "US garage rock band" (~36% of artists)
     area TEXT               -- begin area (usually a city), else area (~72% of artists)
 );
@@ -258,34 +276,42 @@ CREATE TABLE nodes (
 CREATE TABLE edges (
     source TEXT NOT NULL,
     target TEXT NOT NULL,
-    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician", "collaborator"
+    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician",
+                            -- "collaborated_with" / "produced_for" (source sang/played on, or produced,
+                            --   target's records), "opened_for" (source opened for target; concert-database)
 );
+
+CREATE TABLE graph_meta (key TEXT PRIMARY KEY, value TEXT);   -- build info: dump, seeds, hops; opened_for counts
+CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (so a re-run can drop stale ones)
 
 -- Indexes: edges(source), edges(target), edges(rel_type), nodes(name COLLATE NOCASE), nodes(type)
 --
 -- The pipeline (process_mb_dump.py) emits person/group nodes only (no album
--- nodes); album co-credits are collapsed into direct person<->person
--- "collaborator" edges. Graphs older than the disambiguation/area columns still
+-- nodes); credits become artist -> record-artist collaborated_with / produced_for
+-- edges (older graphs had person<->person "collaborator" edges; similarity.ts
+-- still weighs them). Graphs older than the disambiguation/area columns still
 -- load: searchArtists checks PRAGMA table_info and the dropdown then gets
 -- labels from Postgres.
 ```
 
 ## Key design decisions
 
-- **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~38MB download (gzipped), instant queries.
+- **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~49MB download (gzipped, kept under ~50MB), instant queries.
 - **Lazy graph loading**: Pages never wait for the graph download. It starts in the background after the first render (`preloadDb()` in `main.tsx`), and until it finishes `graphSource.ts` and the tiered access answer from Postgres `graph-neighbors`, which holds the same dataset. Those requests pass `log=0`, and Discover's `sqlite-missing` report only runs when the lookup was checked against the local graph, so nothing is added to `search_misses` while the graph is downloading. Postgres only returns 1-hop neighborhoods, so Similarity scores computed before the download finishes can be less precise. Play is the exception: generating a game needs BFS over the whole graph, so its game card still waits.
 - **Gzip auto-detection**: Checks first 2 bytes for gzip magic number (1f 8b). Decompresses manually if browser didn't (GitHub Pages). Skips if Vite already decompressed (Content-Encoding: gzip).
-- **Game restricted to band relationships**: BFS and valid moves only use member_of, former_member_of, support_musician. Album credits stored but not used in gameplay (too complex for players).
-- **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS.
+- **Game restricted to band relationships**: BFS and valid moves only use member_of, former_member_of, support_musician. Collaborations and opened_for are not used in gameplay (too loose a tie for the puzzle).
+- **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS. A no-op now that graphs have no album nodes; kept for older graph files.
 - **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
-- **Explore only shows artists**: Album nodes filtered from search results and neighbor expansion.
+- **Explore only shows artists**: Album nodes (only in old graph files) filtered from search results and neighbor expansion. Directed edges (opened_for, collaborated_with, produced_for) are drawn source → target whichever end was expanded.
 - **Artist dropdown: database first, MusicBrainz as fallback only**: ~1,500 names in the graph belong to more than one artist (four "Fuzz"es), so suggestions carry a MusicBrainz-style parenthetical from the database's `disambiguation` and `area` (both pipelines now write them; Postgres already has `disambiguation`). Suggestions come from the local graph, else Postgres via `graph-neighbors`' `?q=` search mode (which never logs misses; it shares the function with the `log=0` lookups rather than adding a second one); MusicBrainz is asked only when the database has no match or is unreachable. Only graph artists are suggested once the graph has loaded and matches, so every pick can be expanded. Genre is only shown for MusicBrainz fallback results (tags aren't in the main dump).
 - **Concert recommendations (Pollstar, client-side)**: Discover's Concerts toggle fetches upcoming events live in the browser (kept fresh, 24h localStorage cache) rather than via a backend — so results are always current and there's no scrape job to maintain. Pollstar requests are paced ~1 req/sec (first fires immediately) with a realistic UA; CORS handled by Vite dev proxy / corsproxy.io in prod (same pattern as setlistfm). Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
-- **Tiered graph coverage (Option 4)**: `src/pages/tieredGraphAccess.ts` wraps the core sql.js `GraphAccess` and, for artists NOT in the core graph, falls back through Tier 2 (Postgres `graph-neighbors` edge function) → Tier 3 (MusicBrainz live). (Discogs is a planned Tier 4, deferred.) Because the scorer's `GraphAccess` is synchronous but Tier 2/3 are async, it works in two phases: `prepareArtists(names)` (async prefetch of out-of-core artists → node + 1-hop neighbors, cached 24h, concurrent dupes deduped/shared) then `build()` returns a sync facade (core first, then overlay). Similarity and Concerts call `prepareArtists` before scoring, so out-of-core artists (esp. small concert headliners) now resolve instead of scoring 0. Tier 2 returns 1 hop only — reduced multi-hop accuracy for out-of-core artists is an accepted tradeoff. NOTE: Postgres is currently seeded with the SAME BFS-filtered universe as SQLite (`seed_supabase.py`), so Tier 3 (MusicBrainz) does the real coverage lifting until Postgres is re-seeded larger.
-- **Core-graph shrink (Option 4 pipeline)**: `process_mb_dump.py` no longer emits album nodes. Album co-credits are collapsed into undirected `person —collaborator→ person` edges (`collapse_credits_to_collaborator_edges`), removing high-degree album nodes (the runtime compilation filter becomes a no-op) and shrinking the download. `collaborator` has a placeholder weight (0.5) in `similarity.ts`. The committed graph.db.gz uses this schema.
+- **Tiered graph coverage (Option 4)**: `src/pages/tieredGraphAccess.ts` wraps the core sql.js `GraphAccess` and, for artists NOT in the core graph, falls back through Tier 2 (Postgres `graph-neighbors` edge function) → Tier 3 (MusicBrainz live). (Discogs is a planned Tier 4, deferred.) Because the scorer's `GraphAccess` is synchronous but Tier 2/3 are async, it works in two phases: `prepareArtists(names)` (async prefetch of out-of-core artists → node + 1-hop neighbors, cached 24h, concurrent dupes deduped/shared) then `build()` returns a sync facade (core first, then overlay). Similarity and Concerts call `prepareArtists` before scoring, so out-of-core artists (esp. small concert headliners) now resolve instead of scoring 0. Tier 2 returns 1 hop only — reduced multi-hop accuracy for out-of-core artists is an accepted tradeoff. Postgres holds every artist the build reaches, never cut for size (plus the artists of records they worked on), so it covers what the browser graph leaves out when the size budget trims it; MusicBrainz (Tier 3) covers the rest.
+- **Collaborations instead of albums**: a producer, vocal or instrument credit on another artist's record becomes one directed edge from the credited artist to the record's (release group's) first credited artist: `produced_for` for producing, `collaborated_with` for singing/playing (Josh Homme → Arctic Monkeys for Humbug). Engineering credits (mix, engineer, recording), credits on an artist's own records and "Various Artists" compilations are left out. Postgres keeps the number of song credits in `relationships.count`; the browser graph has no count column. No album nodes or album table anywhere (it replaced person↔person `collaborator` co-credit pairs, about half as many edges). Weights (placeholders): `collaborated_with` 0.5, `produced_for` 0.45.
+- **Seeds and size budget**: the graph is every artist within 6 hops of the curated seeds and within `CONCERTDB_HOPS` (default 6) of each artist with a concert in concert-database, over band relationships. The browser download is held under ~50 MB: if `graph.db.gz` comes out over `MAX_GZIP_MB` (49.5, leaving room for the opened_for edges), `process_mb_dump.py` rebuilds it with one hop fewer around concert-database's artists. Postgres is never cut, so Tier 2 covers what the browser graph leaves out. `graph_meta` records the hops used.
 - **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
 - **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
-- **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.
+- **Seed artists**: ~145 recognizable names (persons + iconic bands) at 6 hops, the game's puzzle endpoints; plus concert-database's artists (see "Seeds and size budget").
+- **Concert ties from concert-database**: `scripts/add_concertdb_edges.py` reads the concert-database ledger (read-only; data flows one way, concert-database never reads the graph) and adds one `opened_for` edge per (opener, headliner) pair: both matched to MusicBrainz, not a festival, not cancelled, billing confidence ≥ 0.4. Every act in these pairs has a concert, so the build's concert-database seeds already put it in the graph; an act missing from an older or trimmed graph is added as a node (name, type, disambiguation; no area). `graphDb.getNeighbors` reports each edge's direction (`outgoing`) so Explore draws opener → headliner; Similarity weighs `opened_for` at 0.45 (placeholder, below band ties, above a single album credit) and labels "opened for / headlined". The game and Discover's related-band BFS ignore it (they use band relationships only). Postgres (`graph-neighbors`) doesn't have these edges yet.
 - **Same-type pairs**: Game always pairs person↔person or group↔group.
 - **Vite base (host-aware)**: `vite.config.ts` sets `base` by precedence: explicit `DEPLOY_BASE` env var → Cloudflare build (`WORKERS_CI` from Workers Builds, or `CF_PAGES` from Pages) → `/` → GitHub Pages production default `/MusicSceneMap/` → dev `/`. Cloudflare serves at the domain root, so the GitHub Pages base there causes a blank page (404'd assets) — hence the auto-detection. It also inlines the R2 graph URL on Cloudflare builds (see `__GRAPH_DB_CDN_URL__`), since static-assets-only Workers can't hold env vars.
 - **graph.db.gz loader (local-first, CDN fallback)**: `graphDb.ts` tries the same-origin committed file first, then falls back to the CDN URL (`VITE_GRAPH_DB_URL` or the build-time `__GRAPH_DB_CDN_URL__`) if the local file is missing/HTML-fallback. On Cloudflare the local file is excluded from upload via `public/.assetsignore` (25 MiB asset cap), so it loads from R2.
@@ -313,8 +339,9 @@ python3 scripts/process_mb_dump.py
 When hosting the graph on R2 (Cloudflare), re-upload after a regen:
 
 ```bash
+npm run add-concerts   # refresh the "opened_for" edges from the concert-database ledger
 npm run upload-graph   # upload public/graph.db.gz to R2 (wrangler, --remote)
-npm run regen-graph    # regenerate then upload in one step
+npm run regen-graph    # regenerate (MusicBrainz + concert-database) then upload in one step
 ```
 
 ## Testing
@@ -347,9 +374,8 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 
 **Schema** (`supabase/migrations/`):
 - `artists` — mbid, name, type, disambiguation, country, area (migration 004)
-- `albums` — mbid, name, primary_artist_mbid, release_year, type
 - `venues` — id, name, city, state, country
-- `relationships` — source_id, target_id, rel_type, count
+- `relationships` — source_id, target_id, rel_type, count. Seeded: band relationships and `collaborated_with` / `produced_for` (count = song credits); `played_at` / `toured_with` from venue-search. Album table and per-album credit rows removed in migration 005.
 - `crawl_log` — artist_mbid, city, last_fetched (tracks data freshness, 14-day stale threshold)
 - `search_misses` — query, source, created_at (tracks unknown artist lookups)
 
@@ -363,7 +389,7 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 - `venue-search-missing-artist` — resolved via MusicBrainz, added to Supabase (edge function logs)
 - `venue-search-not-found` — not found anywhere, likely mistype (edge function logs)
 
-**Current size**: ~320MB (artists + albums + relationships). ~180MB headroom for venues.
+**Size**: was ~320MB with albums and per-album credits. With the collaborations model and the concert-database seeds, estimated ~230–290MB for ~240k artists and ~640k relationships (estimate from row counts; check Settings → Usage after re-seeding).
 
 ## Deploying
 
@@ -381,16 +407,14 @@ supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjga
 supabase functions deploy report-miss --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy graph-neighbors --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
-Run `migrations/004_artist_search.sql` for fast dropdown search (`graph-neighbors` `?q=` works without it, just slower and with no `area`), and re-run `seed_supabase.py` to fill `area`.
+Run `migrations/004_artist_search.sql` for fast dropdown search (`graph-neighbors` `?q=` works without it, just slower and with no `area`), and re-run `seed_supabase.py` to fill `area`. Run `migrations/005_collaborations.sql`, then `VACUUM FULL relationships;` on its own, before re-seeding with the collaborations model.
 
 ## What's missing / next steps
 
-- **On-demand MusicBrainz refresh**: Edge function that checks if an artist's relationships are stale (e.g. >30 days) when queried, and fetches latest data from MusicBrainz API to update Supabase. Same pattern as venue-search but for band memberships and album credits. Handles new albums/collaborations appearing over time.
-- **Expand seed list to ~300 artists**: More coverage across genres/eras, reduce MAX_HOPS to 4 for tighter graphs.
+- **On-demand MusicBrainz refresh**: Edge function that checks if an artist's relationships are stale (e.g. >30 days) when queried, and fetches latest data from MusicBrainz API to update Supabase. Same pattern as venue-search but for band memberships and collaborations. Handles new records/collaborations appearing over time.
+- **opened_for in Postgres**: seed `opened_for` edges into `relationships` too (graph-neighbors already returns the type).
+- **Weight collaborations by count**: Postgres has the song-credit count per collaboration; the browser graph doesn't yet (it would cost download size).
 - **Genre/decade graph splits**: Separate smaller files per genre for faster downloads and focused game experiences.
-- **Show album collaborators in Explore**: Collapse person→album→person into direct edges so producers/guests are visible.
-- **Album→artist edges (album_by)**: Add edges linking albums to their primary artist/band (via `artist_credit_name` table). Enables "find contributors to Arctic Monkeys albums" directly.
-- **Filter compilations in script**: Remove compilations at build time (release_group.type=11 or >25 contributors) in addition to runtime filter.
 - **FTS5 search**: Full-text search for fuzzy name matching ("The Arctic Monkeys" → "Arctic Monkeys"). Include artist aliases.
 - **Daily puzzle mode**: Same game for all users each day (date-seeded), shareable results, leaderboard.
 - **Game difficulty levels**: Easy (short paths, famous artists only), Hard (longer paths, obscure connections).

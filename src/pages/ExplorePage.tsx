@@ -20,12 +20,18 @@ function mapNodeType(dbType: string): NodeType {
   }
 }
 
+/** Edge types whose direction means something (see getNeighbors' `outgoing`). */
+const DIRECTED_EDGES = new Set<EdgeType>(["opened_for", "collaborated_with", "produced_for"]);
+
 /** Map SQLite edge types to our graph edge types */
 function mapEdgeType(dbRelType: string): EdgeType {
   switch (dbRelType) {
     case "member_of": return "member_of";
     case "former_member_of": return "former_member_of";
     case "support_musician": return "support_musician";
+    case "opened_for": return "opened_for";
+    case "collaborated_with": return "collaborated_with";
+    case "produced_for": return "produced_for";
     case "producer": return "collaborated_with";
     case "vocal": return "collaborated_with";
     case "instrument": return "collaborated_with";
@@ -64,7 +70,7 @@ async function expandArtist(target: SearchResolution, graph: SceneGraph): Promis
   const filtered = neighbors.filter((n) => n.node.type !== "album");
   debugLog.log(`Expanding "${name}": found ${filtered.length} connections (${neighbors.length - filtered.length} albums hidden)`);
 
-  for (const { node: neighbor, relType } of filtered) {
+  for (const { node: neighbor, relType, outgoing } of filtered) {
     const neighborNodeType = mapNodeType(neighbor.type);
     graph.addNode({
       id: neighbor.id,
@@ -73,11 +79,14 @@ async function expandArtist(target: SearchResolution, graph: SceneGraph): Promis
     } as GraphNode);
 
     const edgeType = mapEdgeType(relType);
-    const edgeId = `${id}-${edgeType}-${neighbor.id}`;
+    // Directed relationships (opener -> headliner, credited artist -> the record's
+    // artist) keep their direction when the expanded artist is the target.
+    // Others are drawn from the expanded artist.
+    const [source, target] = DIRECTED_EDGES.has(edgeType) && outgoing === false ? [neighbor.id, id] : [id, neighbor.id];
     graph.addEdge({
-      id: edgeId,
-      source: id,
-      target: neighbor.id,
+      id: `${source}-${edgeType}-${target}`,
+      source,
+      target,
       type: edgeType,
     });
   }

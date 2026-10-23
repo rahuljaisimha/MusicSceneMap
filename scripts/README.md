@@ -12,7 +12,8 @@ python3 scripts/process_mb_dump.py                       # then add_concertdb_ed
 python3 scripts/process_mb_dump.py --concertdb-hops 2    # fewer hops around concert-database's artists
 ```
 
-Artists: within 6 hops of the curated seeds, and within `--concertdb-hops`
+Artists: within 6 hops of the curated seeds (the game's list in
+`src/game/artists.ts`, by MusicBrainz ID), and within `--concertdb-hops`
 (`CONCERTDB_HOPS`, default 6) of each artist with a concert in the
 concert-database ledger (`CONCERTDB_LEDGER`, default
 `~/concert-database/data/ledger.sqlite`; without it, curated seeds only), over
@@ -20,7 +21,8 @@ band relationships. If `graph.db.gz` is over `--max-gzip-mb` (74), it is
 rebuilt with one hop fewer around concert-database's artists until it fits.
 
 Edges: band relationships, and `produced_for` / `collaborated_with` from an
-artist to the artists whose records they produced or sang/played/performed on.
+artist to the artists whose records they produced or sang/played/performed on
+(not between a band and its members: the membership edge covers that).
 
 ## add_concertdb_edges.py
 

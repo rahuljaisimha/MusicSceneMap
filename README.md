@@ -72,6 +72,8 @@ python3 scripts/add_concertdb_edges.py   # "opened for" links from concert-datab
 
 `process_mb_dump.py` starts from ~145 curated artists and, when a local concert-database ledger is present, from every artist with a concert in it, and keeps the download under 74 MB. `add_concertdb_edges.py` reads a local [concert-database](https://github.com/rahuljaisimha/concert-database) ledger (`~/concert-database/data/ledger.sqlite`, or `--ledger` / `$CONCERTDB_LEDGER`) and adds an "opened for" link for every opener/headliner pair it has confirmed. It can be re-run on its own to refresh those links without rebuilding the graph.
 
+To see the debug log console, open the app with `?debug=1` or `?debug=true` in the URL, e.g. `http://localhost:5173/?debug=1` or `…/#/explore?debug=1`. It stays on while you navigate; reload without the flag to turn it off.
+
 ## Deploying
 
 The app is a static site, deployable to GitHub Pages or Cloudflare (Workers Builds). On Cloudflare the graph database is served from Cloudflare R2 (the file exceeds the 25 MiB static-asset cap). See [`docs/CDN_HOSTING.md`](docs/CDN_HOSTING.md) for setup.

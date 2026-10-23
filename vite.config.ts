@@ -41,11 +41,6 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       proxy: {
-        "/setlistfm-api": {
-          target: "https://api.setlist.fm",
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/setlistfm-api/, "/rest/1.0"),
-        },
         "/pollstar-ac": {
           target: "https://autocomplete.pollstar.com",
           changeOrigin: true,

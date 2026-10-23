@@ -17,7 +17,7 @@ Requirements:
     - Optional: a concert-database ledger (CONCERTDB_LEDGER, default
       ~/concert-database/data/ledger.sqlite); without it only the curated seeds are used
 
-Which artists: every artist within 6 hops of the curated seeds (SEED_ARTIST_NAMES)
+Which artists: every artist within 6 hops of the curated seeds (src/game/artists.ts, by MBID)
 and of each artist with a concert in concert-database (CONCERTDB_HOPS, default 6),
 over band relationships (member of / supporting musician). If graph.db.gz comes
 out over MAX_GZIP_MB, it is rebuilt with one hop fewer around concert-database's
@@ -476,14 +476,24 @@ def build_collaborations(
     release_groups: dict[int, dict],
     credit_to_artist: dict[int, int],
     artists: dict[int, dict],
+    relationships: list[tuple[int, int, str, bool]] = (),
 ) -> dict[tuple[str, str, str], int]:
     """(contributor MBID, album artist MBID, rel_type) -> number of song credits.
 
-    Credits on an artist's own records, on "Various Artists" compilations, and
-    by entities without their own artist entry are skipped.
+    Skipped: credits on an artist's own records, credits between a band and its
+    (current or former) members (the member_of / former_member_of edge already
+    says it; a member is credited on most of the band's records anyway), credits
+    on "Various Artists" compilations, and credits by entities without their own
+    artist entry.
     """
     print("Building collaborations (credited artist -> album artist)...")
+    members = set()
+    for e0, e1, rel_type, _ in relationships:
+        if rel_type == "member of band":
+            members.add((e0, e1))
+            members.add((e1, e0))
     counts: dict[tuple[str, str, str], int] = defaultdict(int)
+    skipped_members = 0
     for artist_id, recording_id, credit in artist_recording_rels:
         rel = COLLAB_REL_TYPES.get(credit)
         if rel is None or artist_id not in artists:
@@ -495,6 +505,9 @@ def build_collaborations(
         owner = credit_to_artist.get(info.get("artist_credit"))
         if owner is None or owner == artist_id or owner not in artists:
             continue
+        if (artist_id, owner) in members:
+            skipped_members += 1
+            continue
         owner_gid = artists[owner]["gid"]
         if owner_gid == VARIOUS_ARTISTS:
             continue
@@ -502,66 +515,30 @@ def build_collaborations(
     by_type = defaultdict(int)
     for (_, _, rel) in counts:
         by_type[rel] += 1
-    print(f"  Collaborations: {len(counts)} ({dict(by_type)})")
+    print(f"  Collaborations: {len(counts)} ({dict(by_type)}); {skipped_members} song credits between"
+          " a band and its members skipped")
     return counts
 
 
 # --- Which artists are in the graph -------------------------------------------
 
-# Curated seed artists (also the game's list, src/game/artists.ts), and the
-# artists with concerts in concert-database (https://github.com/rahuljaisimha/concert-database),
-# read from its ledger. The graph is every artist within a seed's hop budget over
-# band relationships (member of / supporting musician).
-SEED_ARTIST_NAMES = [
-    # Modern Pop / Hip Hop / R&B
-    "Bruno Mars", "The Weeknd", "Rihanna", "Taylor Swift", "Lady Gaga",
-    "Ariana Grande", "Drake", "Billie Eilish", "Kendrick Lamar", "Post Malone",
-    "Kanye West", "Beyoncé", "Frank Ocean", "Tyler, the Creator",
-    "Pharrell Williams", "Jay-Z", "Snoop Dogg", "Dr. Dre", "André 3000",
-    "Nas", "MF DOOM", "Madlib", "RZA", "Q-Tip", "Lauryn Hill",
-    "Missy Elliott", "Justin Timberlake", "D'Angelo", "Erykah Badu",
-    "Anderson .Paak", "Thundercat", "Flying Lotus",
-    # Classic Rock
-    "Jimmy Page", "Robert Plant", "John Paul Jones", "Mick Jagger",
-    "Keith Richards", "David Bowie", "Paul McCartney", "George Harrison",
-    "Eric Clapton", "Jimi Hendrix", "Roger Waters", "David Gilmour",
-    "Freddie Mercury", "Brian May", "Pete Townshend", "Neil Young",
-    "Stevie Nicks", "Peter Gabriel", "Phil Collins",
-    # Punk / Post-Punk
-    "Iggy Pop", "Joe Strummer", "Robert Smith", "David Byrne",
-    # Grunge / 90s Alt
-    "Dave Grohl", "Chris Cornell", "Eddie Vedder", "Billy Corgan",
-    "Trent Reznor", "Flea", "John Frusciante", "Tom Morello",
-    # Indie / Alternative
-    "Thom Yorke", "Jack White", "Josh Homme", "Alex Turner",
-    "Damon Albarn", "Noel Gallagher", "Kevin Parker", "Dan Auerbach",
-    "Julian Casablancas", "St. Vincent",
-    # Garage / Psych
-    "Ty Segall", "John Dwyer",
-    # Metal
-    "Tony Iommi", "Ozzy Osbourne", "James Hetfield", "Lemmy", "Dave Mustaine",
-    # R&B / Soul / Funk
-    "Prince", "Stevie Wonder", "Michael Jackson", "James Brown",
-    # Singer-Songwriters
-    "Bob Dylan", "Tom Waits", "Nick Cave", "Johnny Cash",
-    "Kate Bush", "Björk", "PJ Harvey",
-    # Producers
-    "Brian Eno", "Rick Rubin", "Danger Mouse", "Nigel Godrich",
-    "Jack Antonoff", "Mark Ronson", "Quincy Jones", "Butch Vig",
-    # Iconic Bands
-    "Led Zeppelin", "The Rolling Stones", "Pink Floyd", "The Beatles",
-    "Queen", "The Who", "Fleetwood Mac", "Nirvana", "Foo Fighters",
-    "Soundgarden", "Pearl Jam", "Red Hot Chili Peppers", "Radiohead",
-    "Arctic Monkeys", "Queens of the Stone Age", "The Strokes",
-    "The Black Keys", "Oasis", "Blur", "Gorillaz", "Metallica",
-    "Black Sabbath", "Iron Maiden", "AC/DC", "The Clash", "Joy Division",
-    "New Order", "The Cure", "Rage Against the Machine", "Nine Inch Nails",
-    "Tool", "OutKast", "Wu-Tang Clan", "A Tribe Called Quest", "The Roots",
-    "N.W.A", "Beastie Boys", "Daft Punk", "Massive Attack", "Tame Impala",
-    "LCD Soundsystem", "Arcade Fire", "The White Stripes", "Osees",
-    "King Gizzard & the Lizard Wizard", "Earth, Wind & Fire",
-    "Talking Heads", "Depeche Mode", "Kraftwerk",
-]
+# Curated seed artists: the Six Degrees game's list (src/game/artists.ts), by
+# MusicBrainz ID; plus the artists with concerts in concert-database
+# (https://github.com/rahuljaisimha/concert-database), read from its ledger. The
+# graph is every artist within a seed's hop budget over band relationships
+# (member of / supporting musician).
+GAME_ARTISTS_FILE = PROJECT_DIR / "src" / "game" / "artists.ts"
+
+
+def curated_seed_list(path: Path = GAME_ARTISTS_FILE) -> list[tuple[str, str]]:
+    """(name, MBID) of every entry in src/game/artists.ts."""
+    import re
+
+    entries = re.findall(r'name:\s*"((?:[^"\\]|\\.)*)"[^}]*?mbid:\s*"([0-9a-f-]{36})"', path.read_text(encoding="utf-8"))
+    if not entries:
+        raise RuntimeError(f"no artists with an mbid in {path}")
+    return entries
+
 
 CURATED_HOPS = 6
 CONCERTDB_HOPS = int(os.environ.get("CONCERTDB_HOPS") or 6)
@@ -583,15 +560,17 @@ def node_type(raw_type: str | None) -> str:
 
 
 def resolve_curated_seeds(artists: dict[int, dict]) -> set[str]:
-    name_to_gid = {data["name"].lower(): data["gid"] for data in artists.values()}
+    """The curated seeds' MBIDs that are in this dump (a merged or deleted
+    MusicBrainz artist is reported, not silently swapped for a namesake)."""
+    known = {data["gid"] for data in artists.values()}
+    entries = curated_seed_list()
     seeds = set()
-    for name in SEED_ARTIST_NAMES:
-        gid = name_to_gid.get(name.lower())
-        if gid:
-            seeds.add(gid)
+    for name, mbid in entries:
+        if mbid in known:
+            seeds.add(mbid)
         else:
-            print(f"  WARNING: Seed artist not found in dump: {name}")
-    print(f"  Curated seeds: {len(seeds)} / {len(SEED_ARTIST_NAMES)}")
+            print(f"  WARNING: curated seed {name} ({mbid}) is not in this dump: update src/game/artists.ts")
+    print(f"  Curated seeds: {len(seeds)} / {len(entries)}")
     return seeds
 
 
@@ -759,7 +738,8 @@ def load_graph_inputs():
     credits = parse_artist_recording_relationships(DATA_DIR, links, link_types, ar_ids)
     recording_to_rg, release_groups = build_recording_to_release_group(DATA_DIR)
     credit_to_artist = parse_artist_credit_name(DATA_DIR)
-    collaborations = build_collaborations(credits, recording_to_rg, release_groups, credit_to_artist, artists)
+    collaborations = build_collaborations(credits, recording_to_rg, release_groups, credit_to_artist, artists,
+                                          relationships)
     del credits, recording_to_rg, release_groups, credit_to_artist
     print()
     curated = resolve_curated_seeds(artists)

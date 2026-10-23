@@ -81,13 +81,13 @@ async function generateGame(): Promise<StoredGame | null> {
 
     const startArtist = pickRandom(pool);
     let endArtist = pickRandom(pool);
-    while (endArtist.name === startArtist.name) {
+    while (endArtist.mbid === startArtist.mbid) {
       endArtist = pickRandom(pool);
     }
 
-    // Resolve to IDs
-    const startNode = findNodeByName(startArtist.name);
-    const endNode = findNodeByName(endArtist.name);
+    // Resolve by MusicBrainz ID (names can be ambiguous or out of date)
+    const startNode = findNodeById(startArtist.mbid);
+    const endNode = findNodeById(endArtist.mbid);
 
     if (!startNode || !endNode) {
       debugLog.log(`Game: could not resolve "${startArtist.name}" or "${endArtist.name}" in DB`);
@@ -151,8 +151,8 @@ function buildGameFromNodes(
   const startType: GameArtist["type"] = startNode.type === "group" ? "group" : "person";
   const endType: GameArtist["type"] = endNode.type === "group" ? "group" : "person";
   const game: StoredGame = {
-    startArtist: { name: startNode.name, type: startType },
-    endArtist: { name: endNode.name, type: endType },
+    startArtist: { name: startNode.name, type: startType, mbid: startNode.id },
+    endArtist: { name: endNode.name, type: endType, mbid: endNode.id },
     startId: startNode.id,
     endId: endNode.id,
     shortestPath: path,

@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "upload-graph": "npx wrangler r2 object put musicscenemap-graph/graph.db.gz --file public/graph.db.gz --content-type application/gzip --remote",
-    "regen-graph": "python3 scripts/process_mb_dump.py && npm run upload-graph"
+    "add-concerts": "python3 scripts/add_concertdb_edges.py",
+    "regen-graph": "python3 scripts/process_mb_dump.py && python3 scripts/add_concertdb_edges.py && npm run upload-graph"
   },
   "dependencies": {
     "react": "^18.3.1",

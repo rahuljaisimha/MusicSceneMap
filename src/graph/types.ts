@@ -132,7 +132,7 @@ export const EDGE_COLORS: Record<EdgeType, string> = {
   signed_to: "#55efc4",
   collaborated_with: "#81ecec",
   produced_for: "#a29bfe",
-  opened_for: "#fdcb6e",
+  opened_for: "#fd79a8",
   toured_with: "#e17055",
   performed_at_festival: "#fd79a8",
 };

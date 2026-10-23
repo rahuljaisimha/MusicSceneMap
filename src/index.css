@@ -39,6 +39,11 @@ input {
 }
 
 @media (max-width: 640px) {
+  /* Explore legend: 44px tap targets */
+  .graph-legend .graph-legend-row {
+    min-height: 44px;
+  }
+
   /* Nav: brand + current tab + hamburger; tabs open as a full-width menu */
   .app-nav {
     gap: 0.75rem !important;

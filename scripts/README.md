@@ -13,6 +13,21 @@ python3 scripts/process_mb_dump.py
 
 See inline documentation for details.
 
+## add_concertdb_edges.py
+
+Adds "opened for" edges (opener → headliner, `rel_type = 'opened_for'`) to
+`public/graph.db.gz` from a local concert-database ledger, read-only. Pairs are
+those `concertdb export --musicbrainz-only` exports (both acts matched to
+MusicBrainz, no festivals or cancelled shows, confidence ≥ 0.4). Acts that
+aren't in the graph are added as nodes. Re-running replaces the previous
+`opened_for` edges, so it can refresh them without rebuilding the graph.
+
+```bash
+python3 scripts/process_mb_dump.py        # rebuilds the graph (no opened_for edges)
+python3 scripts/add_concertdb_edges.py    # then add them
+python3 scripts/add_concertdb_edges.py --ledger ~/concert-database/data/ledger.sqlite --min-conf 0.4
+```
+
 ## seed_supabase.py
 
 Seeds the Supabase PostgreSQL database with MusicBrainz data (BFS-filtered from seed artists).

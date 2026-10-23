@@ -26,6 +26,10 @@ Data pipeline (offline, run manually):
         → Deduplicates memberships (any active = current, not former)
         → SQLite database: nodes (persons, groups, albums) + edges
         → Output: public/graph.db.gz (~39MB, committed to repo; also uploaded to R2 for Cloudflare)
+    concert-database ledger (~/concert-database/data/ledger.sqlite, read-only)
+        → scripts/add_concertdb_edges.py adds opener → headliner "opened_for" edges
+          (same pairs as `concertdb export --musicbrainz-only`), adding acts that
+          aren't in the graph as nodes; re-runnable, replaces its previous edges
 
 App loading (lazy, non-blocking):
     UI renders immediately; main.tsx calls preloadDb() once the browser is idle
@@ -206,6 +210,8 @@ src/
 
 scripts/
 ├── process_mb_dump.py    — Downloads MusicBrainz dump, builds browser SQLite graph.
+├── add_concertdb_edges.py — Adds "opened_for" edges (opener → headliner) to graph.db.gz from the
+│                           concert-database ledger. Run after process_mb_dump.py.
 │                           Emits person/group nodes + band edges + collapsed "collaborator"
 │                           edges (album nodes removed; see collapse_credits_to_collaborator_edges).
 ├── seed_supabase.py      — Seeds Supabase Postgres with MusicBrainz data (BFS-filtered).
@@ -258,8 +264,12 @@ CREATE TABLE nodes (
 CREATE TABLE edges (
     source TEXT NOT NULL,
     target TEXT NOT NULL,
-    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician", "collaborator"
+    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician", "collaborator",
+                            -- "opened_for" (source opened for target; from concert-database)
 );
+
+CREATE TABLE graph_meta (key TEXT PRIMARY KEY, value TEXT);   -- when/what add_concertdb_edges.py added
+CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (so a re-run can drop stale ones)
 
 -- Indexes: edges(source), edges(target), edges(rel_type), nodes(name COLLATE NOCASE), nodes(type)
 --
@@ -286,6 +296,7 @@ CREATE TABLE edges (
 - **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
 - **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
 - **Seed artists**: ~145 recognizable names (persons + iconic bands). BFS at 6 hops builds the graph.
+- **Concert ties from concert-database**: `scripts/add_concertdb_edges.py` reads the concert-database ledger (read-only; data flows one way, concert-database never reads the graph) and adds one `opened_for` edge per (opener, headliner) pair: both matched to MusicBrainz, not a festival, not cancelled, billing confidence ≥ 0.4. Acts not reached by the membership BFS are added as nodes (name, type, disambiguation; no area) so small concert headliners get scored. `graphDb.getNeighbors` reports each edge's direction (`outgoing`) so Explore draws opener → headliner; Similarity weighs `opened_for` at 0.45 (placeholder, below band ties, above a single album credit) and labels "opened for / headlined". The game and Discover's related-band BFS ignore it (they use band relationships only). Postgres (`graph-neighbors`) doesn't have these edges yet.
 - **Same-type pairs**: Game always pairs person↔person or group↔group.
 - **Vite base (host-aware)**: `vite.config.ts` sets `base` by precedence: explicit `DEPLOY_BASE` env var → Cloudflare build (`WORKERS_CI` from Workers Builds, or `CF_PAGES` from Pages) → `/` → GitHub Pages production default `/MusicSceneMap/` → dev `/`. Cloudflare serves at the domain root, so the GitHub Pages base there causes a blank page (404'd assets) — hence the auto-detection. It also inlines the R2 graph URL on Cloudflare builds (see `__GRAPH_DB_CDN_URL__`), since static-assets-only Workers can't hold env vars.
 - **graph.db.gz loader (local-first, CDN fallback)**: `graphDb.ts` tries the same-origin committed file first, then falls back to the CDN URL (`VITE_GRAPH_DB_URL` or the build-time `__GRAPH_DB_CDN_URL__`) if the local file is missing/HTML-fallback. On Cloudflare the local file is excluded from upload via `public/.assetsignore` (25 MiB asset cap), so it loads from R2.
@@ -313,8 +324,9 @@ python3 scripts/process_mb_dump.py
 When hosting the graph on R2 (Cloudflare), re-upload after a regen:
 
 ```bash
+npm run add-concerts   # refresh the "opened_for" edges from the concert-database ledger
 npm run upload-graph   # upload public/graph.db.gz to R2 (wrangler, --remote)
-npm run regen-graph    # regenerate then upload in one step
+npm run regen-graph    # regenerate (MusicBrainz + concert-database) then upload in one step
 ```
 
 ## Testing

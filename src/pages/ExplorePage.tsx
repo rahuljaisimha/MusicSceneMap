@@ -26,6 +26,7 @@ function mapEdgeType(dbRelType: string): EdgeType {
     case "member_of": return "member_of";
     case "former_member_of": return "former_member_of";
     case "support_musician": return "support_musician";
+    case "opened_for": return "opened_for";
     case "producer": return "collaborated_with";
     case "vocal": return "collaborated_with";
     case "instrument": return "collaborated_with";
@@ -64,7 +65,7 @@ async function expandArtist(target: SearchResolution, graph: SceneGraph): Promis
   const filtered = neighbors.filter((n) => n.node.type !== "album");
   debugLog.log(`Expanding "${name}": found ${filtered.length} connections (${neighbors.length - filtered.length} albums hidden)`);
 
-  for (const { node: neighbor, relType } of filtered) {
+  for (const { node: neighbor, relType, outgoing } of filtered) {
     const neighborNodeType = mapNodeType(neighbor.type);
     graph.addNode({
       id: neighbor.id,
@@ -73,11 +74,13 @@ async function expandArtist(target: SearchResolution, graph: SceneGraph): Promis
     } as GraphNode);
 
     const edgeType = mapEdgeType(relType);
-    const edgeId = `${id}-${edgeType}-${neighbor.id}`;
+    // "opened_for" points opener -> headliner; keep that direction when the
+    // expanded artist is the headliner. Other relationships are drawn from it.
+    const [source, target] = edgeType === "opened_for" && outgoing === false ? [neighbor.id, id] : [id, neighbor.id];
     graph.addEdge({
-      id: edgeId,
-      source: id,
-      target: neighbor.id,
+      id: `${source}-${edgeType}-${target}`,
+      source,
+      target,
       type: edgeType,
     });
   }

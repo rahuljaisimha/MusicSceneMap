@@ -181,3 +181,63 @@ describe("aggregateScore", () => {
     expect(aggregateScore([mk("a", 60), mk("b", 0, false)])).toBe(60);
   });
 });
+
+/**
+ * Concert ties from concert-database ("opened_for", opener -> headliner):
+ *   Flat Worms --opened_for--> Iguana Death Cult
+ *   Flat Worms --opened_for--> Osees <--member_of-- John Dwyer
+ *   Earth Tongue --opened_for--> Osees
+ */
+function makeConcertGraph(): GraphAccess {
+  const nodes: Record<string, SimNode> = {
+    fw: { id: "fw", name: "Flat Worms", type: "group" },
+    idc: { id: "idc", name: "Iguana Death Cult", type: "group" },
+    osees: { id: "osees", name: "Osees", type: "group" },
+    dwyer: { id: "dwyer", name: "John Dwyer", type: "person" },
+    et: { id: "et", name: "Earth Tongue", type: "group" },
+  };
+  const edges: Array<[string, string, string]> = [
+    ["fw", "idc", "opened_for"],
+    ["fw", "osees", "opened_for"],
+    ["dwyer", "osees", "member_of"],
+    ["et", "osees", "opened_for"],
+  ];
+  return {
+    findNodeByName: (name) => Object.values(nodes).find((n) => n.name === name) ?? null,
+    neighbors(nodeId) {
+      const out: SimNeighbor[] = [];
+      for (const [s, t, rel] of edges) {
+        if (s === nodeId) out.push({ node: nodes[t]!, relType: rel });
+        if (t === nodeId) out.push({ node: nodes[s]!, relType: rel });
+      }
+      return out;
+    },
+  };
+}
+
+describe("opened_for (concert ties)", () => {
+  it("weighs below band membership and above a single album credit", () => {
+    expect(relWeight("opened_for")).toBeLessThan(relWeight("support_musician"));
+    expect(relWeight("opened_for")).toBeGreaterThan(relWeight("producer"));
+  });
+
+  it("connects an opener to the headliner it opened for", () => {
+    const res = computeSimilarity(makeConcertGraph(), "Iguana Death Cult", ["Flat Worms"]);
+    const pair = res.pairs[0]!;
+    expect(pair.connections[0]).toMatchObject({ kind: "direct", relType: "opened_for" });
+    expect(pair.score).toBeGreaterThan(0);
+  });
+
+  it("connects two openers of the same headliner, labelled by that tie", () => {
+    const res = computeSimilarity(makeConcertGraph(), "Earth Tongue", ["Flat Worms"]);
+    const shared = res.pairs[0]!.connections.find((c) => c.kind === "shared")!;
+    expect(shared).toMatchObject({ via: "Osees", relType: "opened_for", weight: REL_WEIGHTS.opened_for });
+  });
+
+  it("labels a shared tie by the weaker of the two edges", () => {
+    // John Dwyer is in Osees; Flat Worms opened for them: the tie is only as strong as opened_for.
+    const res = computeSimilarity(makeConcertGraph(), "John Dwyer", ["Flat Worms"]);
+    const shared = res.pairs[0]!.connections.find((c) => c.kind === "shared")!;
+    expect(shared).toMatchObject({ via: "Osees", relType: "opened_for", weight: REL_WEIGHTS.opened_for });
+  });
+});

@@ -53,7 +53,7 @@ Switch to **Concerts** to see upcoming shows at the city's top venues (from Poll
 
 ## Similarity
 
-Score how closely an artist fits a group of artists you like, from 0 to 100, based on shared band members, collaborations and other connections in the music graph. Artists missing from the built-in graph are looked up from the backend database and MusicBrainz.
+Score how closely an artist fits a group of artists you like, from 0 to 100, based on shared band members, collaborations, who opened for whom at concerts, and other connections in the music graph. Artists missing from the built-in graph are looked up from the backend database and MusicBrainz.
 
 ## Running
 
@@ -67,7 +67,10 @@ The app requires `public/graph.db.gz` (generated from MusicBrainz data, committe
 ```bash
 brew install zstd
 python3 scripts/process_mb_dump.py
+python3 scripts/add_concertdb_edges.py   # "opened for" links from concert-database
 ```
+
+`add_concertdb_edges.py` reads a local [concert-database](https://github.com/rahuljaisimha/concert-database) ledger (`~/concert-database/data/ledger.sqlite`, or `--ledger` / `$CONCERTDB_LEDGER`) and adds an "opened for" link for every opener/headliner pair it has confirmed. It can be re-run on its own to refresh those links without rebuilding the graph.
 
 ## Deploying
 

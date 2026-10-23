@@ -73,7 +73,11 @@ Explore mode:
     User searches artist (or picks from the dropdown)
         → sql.js queries SQLite for node + neighbors
         → Only person/group nodes shown (albums filtered out)
-        → Relationships shown: member_of, former_member_of, support_musician
+        → Relationships: member_of, former_member_of, support_musician shown by default;
+          collaborated_with, produced_for, opened_for ticked on in the legend
+          (GraphLegend: checkbox, colour and arrow direction per type; node
+          colours; remembered in localStorage). Hidden types also hide the artists
+          only they connect. Edges keep their stored direction (member → band, ...)
         → In-memory SceneGraph renders as force-directed graph
         → Graph persists in localStorage across sessions
 
@@ -187,6 +191,8 @@ src/
 │   │                       Inline tabs on desktop; hamburger menu below 640px.
 │   ├── SearchBar.tsx     — Search input, expand, reset, settings. Responsive layout.
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas (solid=expanded, outline=unexpanded).
+│   ├── GraphLegend.tsx   — Explore legend: per relationship type a checkbox, colour, arrow direction;
+│   │                       node colours. Types and defaults in src/graph/relationships.ts.
 │   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) for node details.
 │   ├── SpotifyImportButton.tsx — "Add my Spotify top artists" button for artist-list pages.
 │   │                       Hidden when no Spotify client ID is configured.
@@ -420,7 +426,6 @@ Run `migrations/004_artist_search.sql` for fast dropdown search (`graph-neighbor
 - **Daily puzzle mode**: Same game for all users each day (date-seeded), shareable results, leaderboard.
 - **Game difficulty levels**: Easy (short paths, famous artists only), Hard (longer paths, obscure connections).
 - **Expand node on click**: Direct expansion from graph without search bar.
-- **Legend on graph canvas**: Color key for node/edge types.
 - **Scene detection**: Graph algorithms to identify communities/scenes automatically.
 - **Travel mode**: Input a city, show relevant venues/scenes filtered by taste (requires venue data).
 - **Upcoming shows / Concert Finder (IMPLEMENTED via Pollstar)**: Discover → Concerts toggle recommends upcoming concerts at a city's top venues, ranked by artist similarity. Data-source investigation history:

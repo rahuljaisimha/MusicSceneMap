@@ -1,4 +1,5 @@
 import type {
+  EdgeType,
   GraphNode,
   GraphEdge,
   ForceGraphData,
@@ -64,22 +65,17 @@ export class SceneGraph {
     return this.expandedNodes.has(nodeId);
   }
 
-  toForceGraphData(): ForceGraphData {
+  /**
+   * Force-graph data. With `visibleTypes`, only edges of those types are drawn,
+   * and a node is shown only if it was expanded or one of those edges reaches it.
+   */
+  toForceGraphData(visibleTypes?: ReadonlySet<EdgeType>): ForceGraphData {
     const nodes: ForceGraphNodeData[] = [];
     const links: ForceGraphLinkData[] = [];
-
-    for (const node of this.nodes.values()) {
-      nodes.push({
-        id: node.id,
-        name: node.name,
-        type: node.type,
-        color: NODE_COLORS[node.type],
-        val: node.type === "artist" ? 3 : node.type === "venue" ? 2 : 1,
-        expanded: this.expandedNodes.has(node.id),
-      });
-    }
+    const reached = new Set<string>();
 
     for (const edge of this.edges.values()) {
+      if (visibleTypes && !visibleTypes.has(edge.type)) continue;
       // Only include edges where both nodes exist
       if (this.nodes.has(edge.source) && this.nodes.has(edge.target)) {
         links.push({
@@ -88,7 +84,21 @@ export class SceneGraph {
           type: edge.type,
           color: EDGE_COLORS[edge.type],
         });
+        reached.add(edge.source);
+        reached.add(edge.target);
       }
+    }
+
+    for (const node of this.nodes.values()) {
+      if (visibleTypes && !reached.has(node.id) && !this.expandedNodes.has(node.id)) continue;
+      nodes.push({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        color: NODE_COLORS[node.type],
+        val: node.type === "artist" ? 3 : node.type === "venue" ? 2 : 1,
+        expanded: this.expandedNodes.has(node.id),
+      });
     }
 
     return { nodes, links };

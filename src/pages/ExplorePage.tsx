@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { SearchBar } from "../components/SearchBar";
 import { GraphView } from "../components/GraphView";
 import { InfoPanel } from "../components/InfoPanel";
+import { GraphLegend } from "../components/GraphLegend";
+import { loadVisibleRels, saveVisibleRels } from "../graph/relationships";
 import { DebugConsole } from "../components/DebugConsole";
 import { SceneGraph } from "../graph/SceneGraph";
 import { getDb, isDbLoaded } from "../db/graphDb";
@@ -19,9 +21,6 @@ function mapNodeType(dbType: string): NodeType {
     default: return "artist";
   }
 }
-
-/** Edge types whose direction means something (see getNeighbors' `outgoing`). */
-const DIRECTED_EDGES = new Set<EdgeType>(["opened_for", "collaborated_with", "produced_for"]);
 
 /** Map SQLite edge types to our graph edge types */
 function mapEdgeType(dbRelType: string): EdgeType {
@@ -79,10 +78,11 @@ async function expandArtist(target: SearchResolution, graph: SceneGraph): Promis
     } as GraphNode);
 
     const edgeType = mapEdgeType(relType);
-    // Directed relationships (opener -> headliner, credited artist -> the record's
-    // artist) keep their direction when the expanded artist is the target.
-    // Others are drawn from the expanded artist.
-    const [source, target] = DIRECTED_EDGES.has(edgeType) && outgoing === false ? [neighbor.id, id] : [id, neighbor.id];
+    // Every edge keeps the direction it is stored in (member -> band, opener ->
+    // headliner, credited artist -> the record's artist; see the legend), so
+    // expanding either end gives the same edge. Without a direction (old server
+    // responses), it is drawn from the expanded artist.
+    const [source, target] = outgoing === false ? [neighbor.id, id] : [id, neighbor.id];
     graph.addEdge({
       id: `${source}-${edgeType}-${target}`,
       source,
@@ -100,7 +100,21 @@ export function ExplorePage() {
     g.load();
     return g;
   });
-  const [graphData, setGraphData] = useState(graph.toForceGraphData());
+  // Bumped whenever the SceneGraph changes; the drawn data is derived from it
+  // and from the relationship types ticked in the legend.
+  const [version, setVersion] = useState(0);
+  const [visibleRels, setVisibleRels] = useState<EdgeType[]>(loadVisibleRels);
+  const graphData = useMemo(
+    () => graph.toForceGraphData(new Set(visibleRels)),
+    [graph, version, visibleRels]
+  );
+  const toggleRel = useCallback((type: EdgeType) => {
+    setVisibleRels((prev) => {
+      const next = prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type];
+      saveVisibleRels(next);
+      return next;
+    });
+  }, []);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [loading, setLoading] = useState(false);
   const [dbReady, setDbReady] = useState(isDbLoaded());
@@ -133,7 +147,7 @@ export function ExplorePage() {
           setError(`No artist found for "${artistName}"`);
         } else {
           graph.save();
-          setGraphData(graph.toForceGraphData());
+          setVersion((v) => v + 1);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Unknown error");
@@ -146,7 +160,7 @@ export function ExplorePage() {
 
   const handleReset = useCallback(() => {
     graph.clear();
-    setGraphData(graph.toForceGraphData());
+    setVersion((v) => v + 1);
     setSelectedNode(null);
     pendingNode.current = null;
     setError(null);
@@ -175,6 +189,7 @@ export function ExplorePage() {
       {error && <div style={{ color: "#ff6b6b", padding: "0.5rem 1rem" }}>{error}</div>}
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <GraphView data={graphData} onNodeClick={handleNodeClick} />
+        <GraphLegend visible={visibleRels} onToggle={toggleRel} />
         {selectedNode && (
           <InfoPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
         )}

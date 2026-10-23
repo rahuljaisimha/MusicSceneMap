@@ -45,7 +45,7 @@ A game that gives you two musicians (or two bands) and challenges you to find th
 
 ## Discover
 
-Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related bands for richer recommendations. Powered by Setlist.fm data, cached in a backend database.
+Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related bands for richer recommendations. Checkboxes choose which connections count as "related": band members, former members and supporting musicians by default, plus musicians who played or sang on their records, producers, and acts that opened for them. Powered by Setlist.fm data, cached in a backend database.
 
 Tap **Add my Spotify top artists** to fill the list from your Spotify listening (also on Similarity).
 

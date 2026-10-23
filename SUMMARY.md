@@ -95,7 +95,11 @@ Discover mode (venue recommendations):
             → Edge function resolves artist (DB → MusicBrainz fallback → adds if new)
             → Checks cache (14-day stale threshold), falls back to Setlist.fm API
             → Stores venues + played_at relationships + toured_with
-        → Phase 2: BFS in browser SQLite finds up to 5 connected bands
+        → Phase 2: BFS in browser SQLite finds up to 5 connected bands, following the
+          relationship types ticked under the artist list (relatedBands.ts): band members,
+          former members, supporting musicians (on by default); played/sang on their
+          records, produced their records, opened for / headlined (off by default).
+          The choice is remembered in localStorage.
             → Reports artists missing from SQLite via report-miss function
             → Fetches their venues by MBID in background, merges into results
         → Venues ranked by total show count across all queried artists
@@ -164,6 +168,7 @@ src/
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
 │   │                       Supports random, custom (any two connected nodes), and shared (MBID URL) games.
+│   ├── relatedBands.ts   — Discover's related-band BFS (relationship types to follow, defaults). Pure, tested.
 │   ├── DiscoverPage.tsx  — Venue + concert recommendations. Venues/Concerts toggle. Venues: city + artists
 │   │                       → venues (progressive BFS). Concerts: top venues → Pollstar upcoming events,
 │   │                       ranked by headline-artist similarity (similarity.ts).

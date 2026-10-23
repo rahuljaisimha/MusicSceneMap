@@ -5,11 +5,26 @@ import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { rankConcerts, dedupeEvents, headlineArtist, type RankedConcert } from "./concerts";
 import { SpotifyImportButton } from "../components/SpotifyImportButton";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
+import { DISCOVER_REL_OPTIONS, DEFAULT_DISCOVER_RELS, findConnectedBands } from "./relatedBands";
 
 type DiscoverMode = "venues" | "concerts";
 
 /** How many top venues to pull concerts from. */
 const CONCERT_VENUE_LIMIT = 8;
+
+/** Remembers which relationship types the viewer ticked (this browser only). */
+const REL_TYPES_KEY = "discover.relTypes";
+
+function loadRelTypes(): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(REL_TYPES_KEY) ?? "null");
+    const known = new Set(DISCOVER_REL_OPTIONS.map((o) => o.relType));
+    if (Array.isArray(saved)) return saved.filter((t): t is string => typeof t === "string" && known.has(t));
+  } catch {
+    /* no storage: defaults */
+  }
+  return DEFAULT_DISCOVER_RELS;
+}
 
 export function DiscoverPage() {
   const [mode, setMode] = useState<DiscoverMode>("venues");
@@ -20,6 +35,17 @@ export function DiscoverPage() {
   const [concerts, setConcerts] = useState<RankedConcert[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [relTypes, setRelTypes] = useState<string[]>(loadRelTypes);
+
+  const toggleRelType = (relType: string) => {
+    const next = relTypes.includes(relType) ? relTypes.filter((t) => t !== relType) : [...relTypes, relType];
+    setRelTypes(next);
+    try {
+      localStorage.setItem(REL_TYPES_KEY, JSON.stringify(next));
+    } catch {
+      /* not remembered */
+    }
+  };
 
   const addArtist = (name: string) => {
     const trimmed = name.trim();
@@ -67,41 +93,19 @@ export function DiscoverPage() {
         });
       }
 
-      const connectedBands: Array<{ name: string; mbid: string }> = [];
-      const visited = new Set<string>();
-      const queue: string[] = [];
-
-      // Start BFS from user's artists
-      for (const node of startNodes) {
-        if (node && !visited.has(node.id)) {
-          visited.add(node.id);
-          queue.push(node.id);
-        }
-      }
-
-      // BFS until we find 5 groups. While the graph is still downloading each
-      // step is a server request, so cap how many nodes those expand.
+      // BFS over the ticked relationship types until we find 5 groups. While the
+      // graph is still downloading each step is a server request, so cap how
+      // many nodes those expand.
       const MAX_REMOTE_EXPANSIONS = 30;
       let remoteExpansions = 0;
-      while (queue.length > 0 && connectedBands.length < 5) {
-        if (!isDbLoaded() && remoteExpansions++ >= MAX_REMOTE_EXPANSIONS) break;
-        const nodeId = queue.shift()!;
-        const neighbors = await getArtistNeighbors(nodeId).catch(() => []);
-
-        for (const { node: neighbor, relType } of neighbors) {
-          if (visited.has(neighbor.id)) continue;
-          if (neighbor.type === "album") continue;
-          if (relType !== "member_of" && relType !== "former_member_of" && relType !== "support_musician") continue;
-
-          visited.add(neighbor.id);
-          queue.push(neighbor.id);
-
-          if (neighbor.type === "group" && !artists.includes(neighbor.name)) {
-            connectedBands.push({ name: neighbor.name, mbid: neighbor.id });
-            if (connectedBands.length >= 5) break;
-          }
-        }
-      }
+      const connectedBands = await findConnectedBands({
+        startIds: startNodes.filter((n): n is NonNullable<typeof n> => Boolean(n)).map((n) => n.id),
+        exclude: artists,
+        relTypes,
+        neighbors: getArtistNeighbors,
+        limit: 5,
+        canExpand: () => isDbLoaded() || remoteExpansions++ < MAX_REMOTE_EXPANSIONS,
+      });
 
       if (connectedBands.length === 0) return;
 
@@ -320,6 +324,27 @@ export function DiscoverPage() {
             <SpotifyImportButton artists={artists} onChange={setArtists} />
           </div>
 
+          {mode === "venues" && (
+            <fieldset className="rel-toggles" style={styles.relFieldset}>
+              <legend style={{ ...styles.label, marginBottom: "0.4rem" }}>Also find related bands through</legend>
+              <div style={styles.relList}>
+                {DISCOVER_REL_OPTIONS.map((o) => (
+                  <label key={o.relType} className="rel-toggle" style={styles.relOption}>
+                    <input
+                      type="checkbox"
+                      checked={relTypes.includes(o.relType)}
+                      onChange={() => toggleRelType(o.relType)}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+              {relTypes.length === 0 && (
+                <p style={styles.relNote}>Nothing ticked: only your artists' venues are shown.</p>
+              )}
+            </fieldset>
+          )}
+
           <button
             onClick={handleSubmit}
             disabled={loading || !city.trim() || artists.length === 0}
@@ -453,6 +478,10 @@ const styles: Record<string, React.CSSProperties> = {
   chipRemove: { background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: "1rem", lineHeight: 1, padding: 0 },
   searchBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "none", background: "#ff6b6b", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" },
   error: { color: "#ff6b6b", fontSize: "0.85rem" },
+  relFieldset: { border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.4rem" },
+  relList: { display: "flex", flexWrap: "wrap", gap: "0.25rem 1rem" },
+  relOption: { display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", color: "#ccc", cursor: "pointer" },
+  relNote: { fontSize: "0.75rem", color: "#888", margin: 0 },
   noResults: { color: "#888", fontSize: "0.9rem" },
   results: { width: "100%", maxWidth: "450px" },
   resultsTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e0", marginBottom: "0.75rem" },

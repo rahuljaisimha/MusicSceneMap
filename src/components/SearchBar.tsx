@@ -1,5 +1,4 @@
 import { useState, useEffect, type FormEvent } from "react";
-import { Settings } from "./Settings";
 import { ArtistAutocomplete } from "./ArtistAutocomplete";
 
 interface Props {
@@ -56,7 +55,6 @@ export function SearchBar({ onSearch, loading, prefill, onPrefillConsumed, onRes
       <button type="button" onClick={onReset} className="search-reset" style={styles.resetBtn} title="Clear graph">
         Reset
       </button>
-      <Settings onKeyChange={() => {}} />
     </form>
   );
 }

@@ -161,8 +161,7 @@ src/
 │                           start/end points and the graph build's curated seeds (process_mb_dump.py reads it).
 ├── graph/
 │   ├── types.ts          — Node types, edge types, color maps.
-│   ├── SceneGraph.ts     — In-memory graph with dedup/merge, persistence, expanded tracking.
-│   └── expand.ts         — (Legacy) MusicBrainz API expansion. Unused now.
+│   └── SceneGraph.ts     — In-memory graph with dedup/merge, persistence, expanded tracking.
 ├── pages/
 │   ├── ExplorePage.tsx   — Graph exploration via SQLite. Only person/group nodes. Albums filtered out.
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
@@ -189,15 +188,14 @@ src/
 │   │                       Used by SearchBar, Discover, Similarity and Play's custom game.
 │   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links.
 │   │                       Inline tabs on desktop; hamburger menu below 640px.
-│   ├── SearchBar.tsx     — Search input, expand, reset, settings. Responsive layout.
+│   ├── SearchBar.tsx     — Search input, expand, reset. Responsive layout.
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas (solid=expanded, outline=unexpanded).
 │   ├── GraphLegend.tsx   — Explore legend: per relationship type a checkbox, colour, arrow direction;
 │   │                       node colours. Types and defaults in src/graph/relationships.ts.
 │   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) for node details.
 │   ├── SpotifyImportButton.tsx — "Add my Spotify top artists" button for artist-list pages.
 │   │                       Hidden when no Spotify client ID is configured.
-│   ├── Settings.tsx      — API key, Setlist.fm toggle, debug toggle, clear all data. Bottom sheet on mobile.
-│   └── DebugConsole.tsx  — Collapsible log console.
+│   └── DebugConsole.tsx  — Collapsible log console, shown when the URL has ?debug=1 or ?debug=true.
 ├── api/
 │   ├── supabase.ts       — Client for Supabase edge functions (venue search, aggregation).
 │   ├── spotify.ts        — Spotify PKCE sign-in, token storage/refresh, top-artists fetch.
@@ -206,10 +204,10 @@ src/
 │   │                       ~1 req/sec pacing (first fires ASAP), 24h cache, CORS via proxy.
 │   ├── musicbrainz.ts    — Live MusicBrainz API client (1 req/sec). Fallback only: Tier-3 lookups and
 │   │                       dropdown suggestions the database has no match for (searchArtistsPrefix).
-│   ├── setlistfm.ts      — (Legacy) Live Setlist.fm API client.
 │   └── cache.ts          — localStorage request cache with TTL (used by pollstar.ts, 24h).
 ├── debug/
-│   └── DebugLog.ts       — Singleton log store.
+│   └── DebugLog.ts       — Singleton log store. Enabled by debug=1/true in the query string or the
+│                           hash route's query (#/explore?debug=1); stays on until a reload without it.
 ├── test/
 │   ├── setup.ts          — Vitest setup (localStorage shim for Node env).
 │   ├── musicbrainz.integration.test.ts — Regression tests for recurring MB bugs (stubbed fetch).
@@ -311,7 +309,7 @@ CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (
 - **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
 - **Explore only shows artists**: Album nodes (only in old graph files) filtered from search results and neighbor expansion. Directed edges (opened_for, collaborated_with, produced_for) are drawn source → target whichever end was expanded.
 - **Artist dropdown: database first, MusicBrainz as fallback only**: ~1,500 names in the graph belong to more than one artist (four "Fuzz"es), so suggestions carry a MusicBrainz-style parenthetical from the database's `disambiguation` and `area` (both pipelines now write them; Postgres already has `disambiguation`). Suggestions come from the local graph, else Postgres via `graph-neighbors`' `?q=` search mode (which never logs misses; it shares the function with the `log=0` lookups rather than adding a second one); MusicBrainz is asked only when the database has no match or is unreachable. Only graph artists are suggested once the graph has loaded and matches, so every pick can be expanded. Genre is only shown for MusicBrainz fallback results (tags aren't in the main dump).
-- **Concert recommendations (Pollstar, client-side)**: Discover's Concerts toggle fetches upcoming events live in the browser (kept fresh, 24h localStorage cache) rather than via a backend — so results are always current and there's no scrape job to maintain. Pollstar requests are paced ~1 req/sec (first fires immediately) with a realistic UA; CORS handled by Vite dev proxy / corsproxy.io in prod (same pattern as setlistfm). Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
+- **Concert recommendations (Pollstar, client-side)**: Discover's Concerts toggle fetches upcoming events live in the browser (kept fresh, 24h localStorage cache) rather than via a backend — so results are always current and there's no scrape job to maintain. Pollstar requests are paced ~1 req/sec (first fires immediately) with a realistic UA; CORS handled by Vite dev proxy / corsproxy.io in prod. Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
 - **Tiered graph coverage (Option 4)**: `src/pages/tieredGraphAccess.ts` wraps the core sql.js `GraphAccess` and, for artists NOT in the core graph, falls back through Tier 2 (Postgres `graph-neighbors` edge function) → Tier 3 (MusicBrainz live). (Discogs is a planned Tier 4, deferred.) Because the scorer's `GraphAccess` is synchronous but Tier 2/3 are async, it works in two phases: `prepareArtists(names)` (async prefetch of out-of-core artists → node + 1-hop neighbors, cached 24h, concurrent dupes deduped/shared) then `build()` returns a sync facade (core first, then overlay). Similarity and Concerts call `prepareArtists` before scoring, so out-of-core artists (esp. small concert headliners) now resolve instead of scoring 0. Tier 2 returns 1 hop only — reduced multi-hop accuracy for out-of-core artists is an accepted tradeoff. Postgres holds every artist the build reaches, never cut for size (plus the artists of records they worked on), so it covers what the browser graph leaves out when the size budget trims it; MusicBrainz (Tier 3) covers the rest.
 - **Collaborations instead of albums**: a producer, vocal, instrument or performer credit on another artist's record becomes one directed edge from the credited artist to the record's (release group's) first credited artist: `produced_for` for producing, `collaborated_with` for singing/playing/performing (Josh Homme → Arctic Monkeys for Humbug). Engineering credits (mix, engineer, recording), credits on an artist's own records, credits between a band and its current or former members (the membership edge already covers them) and "Various Artists" compilations are left out. Postgres keeps the number of song credits in `relationships.count`; the browser graph has no count column. No album nodes or album table anywhere (it replaced person↔person `collaborator` co-credit pairs, about half as many edges). Weights (placeholders): `collaborated_with` 0.5, `produced_for` 0.45.
 - **Seeds and size budget**: the graph is every artist within 6 hops of the curated seeds and within `CONCERTDB_HOPS` (default 6) of each artist with a concert in concert-database, over band relationships. The browser download is held under 74 MB: if `graph.db.gz` comes out over `MAX_GZIP_MB` (74), `process_mb_dump.py` rebuilds it with one hop fewer around concert-database's artists. The limit can be generous because the download never blocks a page (lazy loading, Postgres answers meanwhile). Postgres is never cut, so Tier 2 covers what the browser graph leaves out. `graph_meta` records the hops used.
@@ -326,7 +324,7 @@ CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (
 - **Mostly client-side**: The site is static (GitHub Pages / Cloudflare) and graph queries run in the browser. Network calls are limited to Supabase edge functions (venue search, Tier-2 graph lookups, miss reporting), MusicBrainz (Tier-3 fallback), Pollstar (concerts) and Spotify (optional top-artist import).
 - **Spotify import (PKCE, client-side)**: Authorization Code + PKCE needs no client secret, so it fits the static site; the client ID is public and inlined at build (`__SPOTIFY_CLIENT_ID__` in `vite.config.ts`, overridable with `VITE_SPOTIFY_CLIENT_ID`). Sign-in is a full-page redirect (more reliable on phones than a popup), so the button saves the current list and route before leaving and restores both on return. Only the read-only `user-top-read` scope is requested. Tokens live in localStorage and are refreshed with the refresh token; any other in-progress form input (e.g. Discover's city) is not preserved across the first sign-in.
 - **Game persistence**: 24h in localStorage. New Game clears and regenerates.
-- **Responsive**: Phone layouts come from one `@media (max-width: 640px)` block in `index.css` that targets class hooks on components (inline styles stay the desktop default). Below 640px: hamburger nav, one-row Explore toolbar, bottom-sheet InfoPanel and Settings, 44px tap targets, safe-area insets. Tested at 320px and 390px with no horizontal scroll.
+- **Responsive**: Phone layouts come from one `@media (max-width: 640px)` block in `index.css` that targets class hooks on components (inline styles stay the desktop default). Below 640px: hamburger nav, one-row Explore toolbar, bottom-sheet InfoPanel, 44px tap targets, safe-area insets. Tested at 320px and 390px with no horizontal scroll.
 
 ## Running
 
@@ -396,7 +394,7 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 - `venue-search-missing-artist` — resolved via MusicBrainz, added to Supabase (edge function logs)
 - `venue-search-not-found` — not found anywhere, likely mistype (edge function logs)
 
-**Size**: was ~320MB with albums and per-album credits. With the collaborations model and the concert-database seeds, estimated ~230–290MB for ~240k artists and ~640k relationships (estimate from row counts; check Settings → Usage after re-seeding).
+**Size**: was ~320MB with albums and per-album credits. With the collaborations model and the concert-database seeds, 237MB after re-seeding (Supabase dashboard → Settings → Usage).
 
 ## Deploying
 

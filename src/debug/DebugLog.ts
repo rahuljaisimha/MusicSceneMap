@@ -5,19 +5,41 @@ export interface LogEntry {
   message: string;
 }
 
+/**
+ * True when the URL has debug=1 or debug=true, either in the query string
+ * (/?debug=1#/explore) or in the hash route's own query (#/explore?debug=true).
+ */
+export function debugFlagInUrl(loc?: Pick<Location, "search" | "hash">): boolean {
+  if (!loc) return false;
+  const hashQuery = loc.hash.includes("?") ? loc.hash.slice(loc.hash.indexOf("?")) : "";
+  return [loc.search, hashQuery].some((q) => {
+    const v = new URLSearchParams(q).get("debug");
+    return v !== null && ["1", "true"].includes(v.toLowerCase());
+  });
+}
+
 class DebugLog {
   private entries: LogEntry[] = [];
   private listeners = new Set<LogListener>();
-  private _enabled = localStorage.getItem("debug_mode") === "true";
+  private _enabled = debugFlagInUrl(typeof window === "undefined" ? undefined : window.location);
 
-  get enabled(): boolean {
-    return this._enabled;
+  constructor() {
+    // Editing the hash (#/explore?debug=1) doesn't reload the page, so pick the flag up
+    // live. It stays on while navigating the app (links drop the flag); reload without
+    // the flag to turn it off.
+    if (typeof window !== "undefined") {
+      window.addEventListener("hashchange", () => {
+        if (!this._enabled && debugFlagInUrl(window.location)) {
+          this._enabled = true;
+          this.notify();
+        }
+      });
+    }
   }
 
-  setEnabled(value: boolean): void {
-    this._enabled = value;
-    localStorage.setItem("debug_mode", String(value));
-    this.notify();
+  /** On once the URL has had ?debug=1 or ?debug=true since the page loaded. */
+  get enabled(): boolean {
+    return this._enabled;
   }
 
   log(message: string): void {

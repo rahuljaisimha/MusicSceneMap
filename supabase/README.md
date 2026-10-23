@@ -149,7 +149,7 @@ Ranked: exact name, names starting with `q`, names with a word starting with `q`
 
 Relationship types returned: `member_of`, `former_member_of`, `support_musician`, `collaborated_with` and `produced_for` (from the credited artist to the record's artist; `outgoing` says which end the looked-up artist is), and `opened_for` once Postgres has it.
 
-> Postgres is seeded (`seed_supabase.py`) with every artist within reach of the curated seeds and of concert-database's artists, never cut down for size; the browser graph is the same set, cut down to fit its ~50 MB download when it has to be. So Postgres covers the artists the browser graph leaves out.
+> Postgres is seeded (`seed_supabase.py`) with every artist within reach of the curated seeds and of concert-database's artists, never cut down for size; the browser graph is the same set, cut down to fit its 74 MB download limit when it has to be. So Postgres covers the artists the browser graph leaves out.
 
 ---
 

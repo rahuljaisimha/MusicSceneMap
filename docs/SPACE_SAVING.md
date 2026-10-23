@@ -2,7 +2,10 @@
 
 If the Supabase free tier (500MB) is exceeded, these options can reduce storage without losing functionality:
 
-## 1. Flatten album credits to artist→artist (saves ~200-250MB)
+## 1. Flatten album credits to artist→artist (saves ~200-250MB) — done
+
+Done in migration 005 / `seed_supabase.py`: `produced_for` and `collaborated_with`
+artist → artist rows with the song-credit count (314 MB → 248 MB with 3× the artists).
 
 Remove the `albums` table entirely. Instead of:
 ```

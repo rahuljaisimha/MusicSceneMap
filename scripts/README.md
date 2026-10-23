@@ -16,11 +16,11 @@ Artists: within 6 hops of the curated seeds, and within `--concertdb-hops`
 (`CONCERTDB_HOPS`, default 6) of each artist with a concert in the
 concert-database ledger (`CONCERTDB_LEDGER`, default
 `~/concert-database/data/ledger.sqlite`; without it, curated seeds only), over
-band relationships. If `graph.db.gz` is over `--max-gzip-mb` (49.5), it is
+band relationships. If `graph.db.gz` is over `--max-gzip-mb` (74), it is
 rebuilt with one hop fewer around concert-database's artists until it fits.
 
 Edges: band relationships, and `produced_for` / `collaborated_with` from an
-artist to the artists whose records they produced or sang/played on.
+artist to the artists whose records they produced or sang/played/performed on.
 
 ## add_concertdb_edges.py
 

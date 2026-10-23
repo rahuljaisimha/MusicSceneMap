@@ -4,7 +4,7 @@
 -- artist -> artist relationship per role, with the number of song credits in
 -- `count`:
 --   produced_for       producer credits
---   collaborated_with  vocal / instrument credits
+--   collaborated_with  vocal / instrument / performer credits
 -- Engineering credits (mix, engineer, recording) are no longer kept, and
 -- neither are albums. graph-neighbors never returned album neighbors (albums
 -- aren't artists), so nothing reads what is removed here.

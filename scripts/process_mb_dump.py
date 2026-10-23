@@ -23,7 +23,7 @@ over band relationships (member of / supporting musician). If graph.db.gz comes
 out over MAX_GZIP_MB, it is rebuilt with one hop fewer around concert-database's
 artists until it fits; Supabase keeps the full set.
 
-Edges: band relationships, plus collaborations: a producer / vocal / instrument
+Edges: band relationships, plus collaborations: a producer / vocal / instrument / performer
 credit on another artist's record becomes one "produced_for" or
 "collaborated_with" edge to that record's artist (see build_collaborations).
 """
@@ -61,6 +61,7 @@ RELEVANT_ARTIST_RECORDING_TYPES = {
     "producer",
     "vocal",
     "instrument",
+    "performer",
 }
 
 
@@ -464,6 +465,7 @@ COLLAB_REL_TYPES = {
     "producer": "produced_for",        # produced their record
     "vocal": "collaborated_with",      # sang on their record
     "instrument": "collaborated_with", # played on their record
+    "performer": "collaborated_with",  # performed on it (MusicBrainz's general performance credit)
 }
 VARIOUS_ARTISTS = "89ad4ac3-39f7-470e-963a-56509c546377"
 
@@ -567,8 +569,10 @@ CONCERTDB_LEDGER = Path(os.environ.get("CONCERTDB_LEDGER")
                         or Path.home() / "concert-database" / "data" / "ledger.sqlite")
 # The browser download (graph.db.gz). If the graph comes out bigger, it is rebuilt
 # with fewer hops around concert-database's artists (Supabase keeps them all and
-# answers for the rest). Leaves room for add_concertdb_edges.py's opened_for edges.
-MAX_GZIP_MB = 49.5
+# answers for the rest). The app downloads it in the background (preloadDb) and
+# answers from Supabase until it has loaded, so a bigger file only delays the
+# local graph, it doesn't block the page.
+MAX_GZIP_MB = 74
 
 TYPE_MAP = {"1": "person", "2": "group", "3": "group", "4": "group", "5": "person", "6": "person"}
 

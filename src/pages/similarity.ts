@@ -54,7 +54,7 @@ export const REL_WEIGHTS: Record<string, number> = {
   former_member_of: 0.75, // former member — slightly less
   support_musician: 0.6, // supporting/touring musician — slightly less again
   collaborator: 0.5, // album co-credit between two people (graphs built before collaborated_with)
-  collaborated_with: 0.5, // sang or played on the other artist's records (count = song credits)
+  collaborated_with: 0.5, // sang, played or performed on the other artist's records (count = song credits)
   produced_for: 0.45, // produced the other artist's records
   opened_for: 0.45, // one act opened for the other (concert-database; placeholder)
   // Album-credit relationship types. Each is a comparatively weak single tie;

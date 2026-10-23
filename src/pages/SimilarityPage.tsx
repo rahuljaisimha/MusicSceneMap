@@ -25,7 +25,7 @@ function relLabel(relType: string): string {
     case "former_member_of": return "former member";
     case "support_musician": return "support musician";
     case "opened_for": return "opened for / headlined";
-    case "collaborated_with": return "played / sang on records";
+    case "collaborated_with": return "played / sang / performed on records";
     case "produced_for": return "producer";
     case "album_credit": return "album credit";
     case "producer": return "producer";

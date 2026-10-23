@@ -70,7 +70,7 @@ python3 scripts/process_mb_dump.py
 python3 scripts/add_concertdb_edges.py   # "opened for" links from concert-database
 ```
 
-`process_mb_dump.py` starts from ~145 curated artists and, when a local concert-database ledger is present, from every artist with a concert in it, and keeps the download under ~50 MB. `add_concertdb_edges.py` reads a local [concert-database](https://github.com/rahuljaisimha/concert-database) ledger (`~/concert-database/data/ledger.sqlite`, or `--ledger` / `$CONCERTDB_LEDGER`) and adds an "opened for" link for every opener/headliner pair it has confirmed. It can be re-run on its own to refresh those links without rebuilding the graph.
+`process_mb_dump.py` starts from ~145 curated artists and, when a local concert-database ledger is present, from every artist with a concert in it, and keeps the download under 74 MB. `add_concertdb_edges.py` reads a local [concert-database](https://github.com/rahuljaisimha/concert-database) ledger (`~/concert-database/data/ledger.sqlite`, or `--ledger` / `$CONCERTDB_LEDGER`) and adds an "opened for" link for every opener/headliner pair it has confirmed. It can be re-run on its own to refresh those links without rebuilding the graph.
 
 ## Deploying
 

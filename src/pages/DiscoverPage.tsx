@@ -3,7 +3,6 @@ import { searchVenuesForArtists, searchVenuesByMbid, type VenueResult } from "..
 import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarEvent } from "../api/pollstar";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { rankConcerts, dedupeEvents, headlineArtist, type RankedConcert } from "./concerts";
-import { SpotifyImportButton } from "../components/SpotifyImportButton";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 
 type DiscoverMode = "venues" | "concerts";
@@ -317,7 +316,6 @@ export function DiscoverPage() {
                 ))}
               </div>
             )}
-            <SpotifyImportButton artists={artists} onChange={setArtists} />
           </div>
 
           <button

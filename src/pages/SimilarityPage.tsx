@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { computeSimilarity, type SimilarityResult } from "./similarity";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
-import { SpotifyImportButton } from "../components/SpotifyImportButton";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 
 function scoreColor(score: number): string {
@@ -130,7 +129,6 @@ export function SimilarityPage() {
                 ))}
               </div>
             )}
-            <SpotifyImportButton artists={artists} onChange={setArtists} />
           </div>
 
           <div style={styles.field}>

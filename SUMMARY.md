@@ -4,7 +4,7 @@
 
 A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages and/or Cloudflare (Workers Builds); see `docs/CDN_HOSTING.md`.
 
-Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Discover and Similarity can fill their artist lists from the user's Spotify top artists. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists MusicBrainz-style: "Fuzz (US garage rock band · San Francisco)".
+Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Discover and Similarity can fill their artist lists from the user's Spotify top artists. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists with their MusicBrainz disambiguation: "Fuzz (US garage rock band)"; artists MusicBrainz doesn't disambiguate get no label.
 
 ## Tech stack
 
@@ -62,9 +62,9 @@ Artist dropdown (ArtistAutocomplete, all artist inputs):
         → Graph not loaded yet, or no graph match: Postgres search (graph-neighbors
           ?q= mode; same ranking; never logs to search_misses)
         → MusicBrainz ONLY when the database has no match or can't be reached
-          (prefix query; its results also carry a genre from the top tag)
-        → Label: "Name (disambiguation · city · genre)", parts the disambiguation
-          already mentions left out
+          (prefix query)
+        → Label: "Name (disambiguation)" from MusicBrainz's disambiguation comment
+          only; no label when MusicBrainz has none (no city/genre stand-ins)
         → Shows "Searching…" / "No matching artists" / "Couldn't load suggestions";
           re-runs when the graph finishes loading. Browser MusicBrainz calls send no
           custom headers (a User-Agent header would force a CORS preflight)
@@ -155,7 +155,7 @@ src/
 │   │                       disambiguation/area columns when the graph has them).
 │   ├── artistSuggest.ts  — Artist-dropdown suggestions: graph → Postgres search → MusicBrainz
 │   │                       fallback (findSuggestions, sources injectable for tests); builds the
-│   │                       "(disambiguation · city · genre)" label.
+│   │                       "(disambiguation)" label (MusicBrainz's comment only).
 │   └── graphSource.ts    — Async artist lookups: local graph once loaded, else Postgres graph-neighbors
 │                           (log=0, memoized). Used by Explore and Discover.
 ├── game/

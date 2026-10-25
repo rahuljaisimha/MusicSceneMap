@@ -23,8 +23,8 @@ const DEBOUNCE_MS = 300;
 
 /**
  * Text input with an artist dropdown. Suggestions show MusicBrainz-style
- * disambiguation in parentheses (city, genre) so same-name artists can be
- * told apart. Typing stays free-form: Enter without a highlighted
+ * disambiguation comment in parentheses (none when MusicBrainz has none) so
+ * same-name artists can be told apart. Typing stays free-form: Enter without a highlighted
  * suggestion calls onEnter with the typed text.
  */
 export function ArtistAutocomplete({

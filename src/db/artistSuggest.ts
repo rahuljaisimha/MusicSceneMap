@@ -4,11 +4,10 @@
  * Suggestions come from the database: the local graph once it has loaded,
  * else Postgres (graph-neighbors' search mode, which never logs misses).
  * MusicBrainz is only a fallback for when the database has no match.
- * Each suggestion is labelled like MusicBrainz does — "Fuzz (US garage rock
- * band · San Francisco)" — from the disambiguation comment and the artist's
- * city/area (plus the top tag as genre for MusicBrainz fallback results), so
- * artists with the same name can be told apart. The committed graph has no
- * label columns until the next regen; until then labels come from Postgres.
+ * Each suggestion is labelled the way MusicBrainz does it: its disambiguation
+ * comment in parentheses, "Fuzz (US garage rock band)", and nothing when
+ * MusicBrainz has none (that artist doesn't need telling apart). A graph
+ * without the disambiguation column gets its labels from Postgres.
  */
 
 import type { ArtistMatch } from "./graphDb";
@@ -19,25 +18,18 @@ export interface ArtistSuggestion {
   name: string;
   /** "person" or "group" */
   type: string;
+  /** MusicBrainz's disambiguation comment, the only label shown. */
   disambiguation?: string;
-  /** City (MusicBrainz begin area) or, failing that, area/country. */
-  area?: string;
-  /** Most-voted MusicBrainz tag. */
-  genre?: string;
 }
 
 const GROUP_TYPES = new Set(["Group", "Orchestra", "Choir"]);
 
 export function fromMusicBrainz(a: MBArtist): ArtistSuggestion {
-  const topTag = [...(a.tags ?? [])].filter((t) => t.count > 0).sort((x, y) => y.count - x.count)[0];
-  const area = a["begin-area"]?.name ?? a.area?.name;
   return {
     id: a.id,
     name: a.name,
     type: a.type && GROUP_TYPES.has(a.type) ? "group" : "person",
     ...(a.disambiguation ? { disambiguation: a.disambiguation } : {}),
-    ...(area ? { area } : {}),
-    ...(topTag ? { genre: topTag.name } : {}),
   };
 }
 
@@ -48,7 +40,6 @@ function fromMatch(n: ArtistMatch): ArtistSuggestion {
     name: n.name,
     type: n.type,
     ...(n.disambiguation ? { disambiguation: n.disambiguation } : {}),
-    ...(n.area ? { area: n.area } : {}),
   };
 }
 
@@ -91,7 +82,7 @@ export async function findSuggestions(
     const labels = new Map(db.map((d) => [d.id, d]));
     return graphHits.map((n) => {
       const d = labels.get(n.id);
-      return fromMatch({ ...n, disambiguation: n.disambiguation ?? d?.disambiguation, area: n.area ?? d?.area });
+      return fromMatch({ ...n, disambiguation: n.disambiguation ?? d?.disambiguation });
     });
   }
   if (db.length > 0) return db.slice(0, limit).map(fromMatch);
@@ -103,19 +94,9 @@ export async function findSuggestions(
   }
 }
 
-/**
- * The parenthetical shown after the name: disambiguation, city, genre.
- * Parts already mentioned in the disambiguation are left out
- * ("US garage rock band" doesn't need "garage rock" again).
- */
+/** The parenthetical shown after the name: MusicBrainz's disambiguation, if any. */
 export function suggestionDetail(s: ArtistSuggestion): string | null {
-  const parts: string[] = [];
-  const seen = (s.disambiguation ?? "").toLowerCase();
-  if (s.disambiguation) parts.push(s.disambiguation);
-  for (const p of [s.area, s.genre]) {
-    if (p && !seen.includes(p.toLowerCase()) && !parts.some((x) => x.toLowerCase() === p.toLowerCase())) parts.push(p);
-  }
-  return parts.length > 0 ? parts.join(" · ") : null;
+  return s.disambiguation?.trim() || null;
 }
 
 /** Share requests for the same query across keystrokes; failed requests aren't kept. */
@@ -140,7 +121,6 @@ const searchDbMemo = memoize(async (key: string) => {
     name: r.name,
     type: r.type,
     ...(r.disambiguation ? { disambiguation: r.disambiguation } : {}),
-    ...(r.area ? { area: r.area } : {}),
   }));
 });
 

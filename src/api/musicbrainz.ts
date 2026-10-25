@@ -101,8 +101,8 @@ function escapeLucene(term: string): string {
 
 /**
  * Search-as-you-type query: the last word is a prefix ("ty seg" matches
- * "Ty Segall"), the full phrase is boosted. Results include disambiguation,
- * area, begin-area and tags, which label the artist dropdown.
+ * "Ty Segall"), the full phrase is boosted. Results include the disambiguation
+ * comment, which labels the artist dropdown.
  */
 export async function searchArtistsPrefix(query: string, limit = 15): Promise<MBArtist[]> {
   const words = query.trim().split(/\s+/).filter(Boolean).map(escapeLucene);

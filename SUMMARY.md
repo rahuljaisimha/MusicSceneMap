@@ -240,7 +240,9 @@ supabase/
 │   ├── 005_collaborations.sql — Drops albums + per-album credit rows and two redundant indexes
 │                           (then VACUUM FULL relationships; re-seed; redeploy graph-neighbors).
 │   ├── 006_genres.sql      — genres table (id, name) and artists.genre_ids (ids, most voted first).
-│   └── 007_search_misses_reader.sql — read-only role concertdb_misses (SELECT on search_misses only).
+│   ├── 007_search_misses_reader.sql — read-only role concertdb_misses (SELECT on search_misses only).
+│   └── 008_row_level_security.sql — RLS on every table: anon/authenticated see nothing; service role,
+│                           owner and concertdb_misses (policy) unaffected.
 ├── config.toml           — Supabase project config.
 └── README.md             — Deployment instructions.
 
@@ -378,6 +380,7 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 **Schema** (`supabase/migrations/`):
 - `artists` — mbid, name, type, disambiguation, country, area (migration 004), genre_ids (migration 006: ids into `genres`, most voted first)
 - `genres` — id, name: the MusicBrainz genres artists use (replaced on each seed; ids follow MusicBrainz's sorted genre list)
+- **Access**: row-level security is on for every table (migration 008) with no policy for `anon` / `authenticated`, so the public API key reads and writes nothing. The edge functions use the service role (bypasses RLS); the seed scripts connect as the owner; `concertdb_misses` reads `search_misses` through its own policy.
 - `venues` — id, name, city, state, country
 - `relationships` — source_id, target_id, rel_type, count. Seeded: band relationships and `collaborated_with` / `produced_for` (count = song credits); `played_at` / `toured_with` from venue-search. Album table and per-album credit rows removed in migration 005.
 - `crawl_log` — artist_mbid, city, last_fetched (tracks data freshness, 14-day stale threshold)

@@ -38,6 +38,29 @@ input {
   padding-right: max(0.75rem, env(safe-area-inset-right)) !important;
 }
 
+/* Play: placeholders while the graph downloads */
+.skeleton {
+  display: inline-block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #242424 0%, #333 50%, #242424 100%);
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+.skeleton-name { width: 7rem; max-width: 22vw; height: 1.4rem; }
+.skeleton-par { width: 4rem; max-width: 16vw; height: 1.6rem; border-radius: 12px; }
+.skeleton-move { width: 60%; height: 0.9rem; }
+@keyframes skeleton-pulse {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+.game-buttons button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 @media (max-width: 640px) {
   /* Explore legend: 44px tap targets */
   .graph-legend .graph-legend-row {

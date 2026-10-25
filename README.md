@@ -41,7 +41,7 @@ As you type, a dropdown suggests matching artists from the app's database. Each 
 
 ## Six Degrees of Music (Game)
 
-A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships and supporting roles. Navigate by selecting from valid connections at each step. The app computes the shortest path and shows you a "par" to beat.
+A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships and supporting roles. Navigate by selecting from valid connections at each step. The app computes the shortest path and shows you a "par" to beat. The page opens straight away: a game in progress comes back at once, and a new game's artists fill in as soon as the music graph has downloaded.
 
 ## Discover
 

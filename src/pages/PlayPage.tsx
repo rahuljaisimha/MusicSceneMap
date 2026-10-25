@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { GAME_ARTISTS, type GameArtist } from "../game/artists";
-import { getDb, findNodeByName, bfsShortestPath, findNodeById, getNeighbors } from "../db/graphDb";
+import { getDb, isDbLoaded, findNodeByName, bfsShortestPath, findNodeById, getNeighbors } from "../db/graphDb";
 import { DebugConsole } from "../components/DebugConsole";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { debugLog } from "../debug/DebugLog";
@@ -9,6 +9,12 @@ import { debugLog } from "../debug/DebugLog";
 /** Only these relationship types are used in the game */
 const GAME_REL_TYPES = new Set(["member_of", "former_member_of", "support_musician"]);
 
+/**
+ * "loading": the game isn't known yet (a random game needs the graph to find a
+ * path). Its start/end may already be known (a shared link to curated artists),
+ * and show while the rest loads. "playing" can start before the graph has
+ * downloaded (a saved game): only the list of moves waits for it.
+ */
 interface GameState {
   status: "loading" | "error" | "playing";
   error?: string;
@@ -61,6 +67,39 @@ function loadGame(): StoredGame | null {
 
 function clearGame(): void {
   localStorage.removeItem(GAME_STORAGE_KEY);
+}
+
+function playing(game: StoredGame): GameState {
+  return {
+    status: "playing",
+    startArtist: game.startArtist,
+    endArtist: game.endArtist,
+    startId: game.startId,
+    endId: game.endId,
+    shortestPath: game.shortestPath,
+    par: game.par,
+    guesses: game.guesses,
+    revealed: game.revealed,
+  };
+}
+
+const curatedById = (mbid: string) => GAME_ARTISTS.find((a) => a.mbid === mbid);
+
+/**
+ * What can be shown before the graph has downloaded: a saved game in full, or a
+ * shared link's start and end (their names when they are curated artists).
+ */
+function initialState(params: URLSearchParams): GameState {
+  const start = params.get("start");
+  const end = params.get("end");
+  if (start && end) {
+    const saved = loadGame();
+    if (saved && saved.startId === start && saved.endId === end) return playing(saved);   // reload mid-game
+    return { status: "loading", startId: start, endId: end, startArtist: curatedById(start),
+             endArtist: curatedById(end), guesses: [], revealed: false };
+  }
+  const saved = loadGame();
+  return saved ? playing(saved) : { status: "loading", guesses: [], revealed: false };
 }
 
 function pickRandom<T>(arr: T[]): T {
@@ -247,7 +286,9 @@ function formatRelType(relType: string, nodeType: string): string {
 
 export function PlayPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [state, setState] = useState<GameState>({ status: "loading", guesses: [], revealed: false });
+  const [state, setState] = useState<GameState>(() => initialState(searchParams));
+  // The graph (~47 MB) downloads in the background; the page doesn't wait for it.
+  const [dbReady, setDbReady] = useState(isDbLoaded);
   const [input, setInput] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [customStart, setCustomStart] = useState("");
@@ -307,17 +348,7 @@ export function PlayPage() {
     const game = await generateGame();
     if (game) {
       setSearchParams({ start: game.startId, end: game.endId }, { replace: true });
-      setState({
-        status: "playing",
-        startArtist: game.startArtist,
-        endArtist: game.endArtist,
-        startId: game.startId,
-        endId: game.endId,
-        shortestPath: game.shortestPath,
-        par: game.par,
-        guesses: game.guesses,
-        revealed: game.revealed,
-      });
+      setState(playing(game));
     } else {
       setState({ status: "error", error: "Could not generate a game. Is graph.db loaded?", guesses: [], revealed: false });
     }
@@ -347,21 +378,11 @@ export function PlayPage() {
     setCustomEndPick(null);
     setInput("");
     setSearchParams({ start: game.startId, end: game.endId }, { replace: true });
-    setState({
-      status: "playing",
-      startArtist: game.startArtist,
-      endArtist: game.endArtist,
-      startId: game.startId,
-      endId: game.endId,
-      shortestPath: game.shortestPath,
-      par: game.par,
-      guesses: game.guesses,
-      revealed: game.revealed,
-    });
+    setState(playing(game));
   }, [customStart, customEnd, customStartPick, customEndPick, setSearchParams]);
 
   const handleShare = useCallback(() => {
-    if (state.status !== "playing") return;
+    if (!state.startId || !state.endId) return;
     const url = new URL(window.location.href);
     const params = new URLSearchParams({
       start: state.startId!,
@@ -382,75 +403,47 @@ export function PlayPage() {
     }
   }, [state]);
 
-  // Load saved game or generate new one
+  // Download the graph, then finish whatever the first render couldn't: a shared
+  // game's path, or a new random game. A saved game is already playing.
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         await getDb();
       } catch (e) {
-        setState({ status: "error", error: e instanceof Error ? e.message : "Failed to load database", guesses: [], revealed: false });
+        if (!cancelled) setState({ status: "error", error: e instanceof Error ? e.message : "Failed to load database", guesses: [], revealed: false });
         return;
       }
+      if (cancelled) return;
+      setDbReady(true);
+      const initial = initialState(searchParams);
+      if (initial.status === "playing") return;
 
       // 1. Shared game via URL params (?start=<mbid>&end=<mbid>) takes priority
-      const sharedStart = searchParams.get("start");
-      const sharedEnd = searchParams.get("end");
-      if (sharedStart && sharedEnd) {
+      if (initial.startId && initial.endId) {
         clearGame();
-        const result = await generateGameFromIds(sharedStart, sharedEnd);
+        const result = await generateGameFromIds(initial.startId, initial.endId);
+        if (cancelled) return;
         if ("game" in result) {
-          const { game } = result;
-          setState({
-            status: "playing",
-            startArtist: game.startArtist,
-            endArtist: game.endArtist,
-            startId: game.startId,
-            endId: game.endId,
-            shortestPath: game.shortestPath,
-            par: game.par,
-            guesses: game.guesses,
-            revealed: game.revealed,
-          });
+          setState(playing(result.game));
           return;
         }
         // If the shared game is invalid, fall through to a random game
         debugLog.log(`Shared game invalid: ${result.error}`);
+        setState({ status: "loading", guesses: [], revealed: false });
       }
 
-      // 2. Resume a saved game
-      const saved = loadGame();
-      if (saved) {
-        setState({
-          status: "playing",
-          startArtist: saved.startArtist,
-          endArtist: saved.endArtist,
-          startId: saved.startId,
-          endId: saved.endId,
-          shortestPath: saved.shortestPath,
-          par: saved.par,
-          guesses: saved.guesses,
-          revealed: saved.revealed,
-        });
+      // 2. A new random game
+      const game = await generateGame();
+      if (cancelled) return;
+      if (game) {
+        setSearchParams({ start: game.startId, end: game.endId }, { replace: true });
+        setState(playing(game));
       } else {
-        // 3. Generate a random game
-        const game = await generateGame();
-        if (game) {
-          setState({
-            status: "playing",
-            startArtist: game.startArtist,
-            endArtist: game.endArtist,
-            startId: game.startId,
-            endId: game.endId,
-            shortestPath: game.shortestPath,
-            par: game.par,
-            guesses: game.guesses,
-            revealed: game.revealed,
-          });
-        } else {
-          setState({ status: "error", error: "Could not generate a game.", guesses: [], revealed: false });
-        }
+        setState({ status: "error", error: "Could not generate a game.", guesses: [], revealed: false });
       }
     })();
+    return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGuess = (name?: string) => {
@@ -525,13 +518,6 @@ export function PlayPage() {
           </p>
         </div>
 
-        {state.status === "loading" && (
-          <div style={styles.card}>
-            <p style={styles.loadingText}>Loading database…</p>
-            <p style={styles.hint}>The game needs the full graph (~38MB). It downloads once, in the background.</p>
-          </div>
-        )}
-
         {state.status === "error" && (
           <div style={styles.card}>
             <p style={styles.errorText}>{state.error}</p>
@@ -539,20 +525,46 @@ export function PlayPage() {
           </div>
         )}
 
-        {state.status === "playing" && (
-          <>
-            <div className="endpoints-card" style={styles.endpointsCard}>
-              <div style={styles.endpoint}>
-                <span style={styles.endpointLabel}>Start</span>
-                <span className="endpoint-name" style={styles.endpointName}>{state.startArtist!.name}</span>
-              </div>
-              <div style={styles.parBadge}>Par {state.par}</div>
-              <div style={styles.endpoint}>
-                <span style={styles.endpointLabel}>End</span>
-                <span className="endpoint-name" style={styles.endpointName}>{state.endArtist!.name}</span>
-              </div>
+        {state.status !== "error" && (
+          <div className="endpoints-card" style={styles.endpointsCard} aria-busy={state.status === "loading"}>
+            <div style={styles.endpoint}>
+              <span style={styles.endpointLabel}>Start</span>
+              {state.startArtist
+                ? <span className="endpoint-name" style={styles.endpointName}>{state.startArtist.name}</span>
+                : <span className="skeleton skeleton-name" aria-label="Picking the start…" />}
             </div>
+            {state.par != null
+              ? <div style={styles.parBadge}>Par {state.par}</div>
+              : <span className="skeleton skeleton-par" aria-hidden="true" />}
+            <div style={styles.endpoint}>
+              <span style={styles.endpointLabel}>End</span>
+              {state.endArtist
+                ? <span className="endpoint-name" style={styles.endpointName}>{state.endArtist.name}</span>
+                : <span className="skeleton skeleton-name" aria-label="Picking the end…" />}
+            </div>
+          </div>
+        )}
 
+        {(state.status === "loading" || (state.status === "playing" && !dbReady)) && (
+          <div style={styles.inputSection}>
+            <div className="moves-list" style={styles.movesList} aria-hidden="true">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="move-item" style={styles.moveItem}>
+                  <span className="skeleton skeleton-move" />
+                </div>
+              ))}
+            </div>
+            <p style={styles.hint}>
+              {dbReady
+                ? "Finding a path…"
+                : "Loading the music graph (~47 MB, downloaded once in the background)…"}
+            </p>
+          </div>
+        )}
+
+        {state.status !== "error" && (
+          <>
+            {state.status === "playing" && dbReady && (<>
             {!state.revealed && (
               <div style={styles.inputSection}>
                 <div style={styles.guessList}>
@@ -641,14 +653,16 @@ export function PlayPage() {
               </div>
             )}
 
+            </>)}
+
             <div className="game-buttons" style={styles.gameButtons}>
-              <button onClick={startNewGame} style={styles.newGameBtn}>
+              <button onClick={startNewGame} disabled={state.status === "loading"} style={styles.newGameBtn}>
                 New Game
               </button>
               <button onClick={() => { setShowCustom((s) => !s); setCustomError(null); }} style={styles.customBtn}>
                 Custom Game
               </button>
-              <button onClick={handleShare} style={styles.shareBtn}>
+              <button onClick={handleShare} disabled={!state.startId || !state.endId} style={styles.shareBtn}>
                 {shareCopied ? "Copied!" : "Share"}
               </button>
             </div>

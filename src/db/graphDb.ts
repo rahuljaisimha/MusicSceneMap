@@ -342,7 +342,7 @@ export interface ArtistMatch extends NodeRecord {
   area?: string;
 }
 
-let detailColumns: { disambiguation: boolean; area: boolean } | null = null;
+let detailColumns: { disambiguation: boolean; area: boolean; genres: boolean } | null = null;
 
 /** Whether the loaded graph stores disambiguation/area (graphs from newer pipeline runs). */
 export function hasDetailColumns(): boolean {
@@ -352,13 +352,48 @@ export function hasDetailColumns(): boolean {
 }
 
 /** Which optional detail columns this graph's nodes table has (added by newer pipeline runs). */
-function getDetailColumns(): { disambiguation: boolean; area: boolean } {
+function getDetailColumns(): { disambiguation: boolean; area: boolean; genres: boolean } {
   if (detailColumns) return detailColumns;
   const cols = new Set<string>();
   const res = db!.exec("PRAGMA table_info(nodes)");
   for (const row of res[0]?.values ?? []) cols.add(row[1] as string);
-  detailColumns = { disambiguation: cols.has("disambiguation"), area: cols.has("area") };
+  const genreTable = db!.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'genres'").length > 0;
+  detailColumns = { disambiguation: cols.has("disambiguation"), area: cols.has("area"),
+                    genres: cols.has("genres") && genreTable };
   return detailColumns;
+}
+
+export interface ArtistDetails {
+  /** MusicBrainz disambiguation comment. */
+  disambiguation?: string;
+  /** MusicBrainz genres, most voted first (2+ votes; top 3 plus ties). Empty when none. */
+  genres: string[];
+}
+
+let genreNames: Map<number, string> | null = null;
+
+/**
+ * What the info panel shows about an artist beyond its name, from the local
+ * graph. Null when the graph hasn't loaded or doesn't have the artist; a graph
+ * built before the genre columns existed gives no genres.
+ */
+export function getArtistDetails(id: string): ArtistDetails | null {
+  if (!db) return null;
+  const cols = getDetailColumns();
+  const stmt = db.prepare(
+    `SELECT ${cols.disambiguation ? "disambiguation" : "NULL"}, ${cols.genres ? "genres" : "NULL"} FROM nodes WHERE id = ?`
+  );
+  stmt.bind([id]);
+  const row = stmt.step() ? stmt.get() : null;
+  stmt.free();
+  if (!row) return null;
+  if (cols.genres && !genreNames) {
+    genreNames = new Map((db.exec("SELECT id, name FROM genres")[0]?.values ?? []).map((r) => [r[0] as number, r[1] as string]));
+  }
+  const genres = typeof row[1] === "string" && row[1]
+    ? row[1].split(",").map((g) => genreNames?.get(Number(g))).filter((g): g is string => Boolean(g))
+    : [];
+  return { ...(row[0] ? { disambiguation: row[0] as string } : {}), genres };
 }
 
 /**

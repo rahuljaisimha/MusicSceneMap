@@ -141,6 +141,9 @@ input {
     min-width: 44px;
     min-height: 44px;
   }
+  .info-panel .info-link {
+    min-height: 44px;
+  }
 
   /* Scrollable pages (Play / Discover / About) */
   .page-container {

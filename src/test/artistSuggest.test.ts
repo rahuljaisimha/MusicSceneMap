@@ -19,19 +19,17 @@ const fuzzUS: MBArtist = {
 const fuzzUK: MBArtist = { id: "fuzz-uk", name: "Fuzz", type: "Person", area: { name: "United Kingdom" } };
 
 describe("fromMusicBrainz", () => {
-  it("maps type, prefers the begin area (city) and takes the most-voted tag", () => {
+  it("maps type and keeps only the disambiguation (no area or tags)", () => {
     expect(fromMusicBrainz(fuzzUS)).toEqual({
       id: "fuzz-us",
       name: "Fuzz",
       type: "group",
       disambiguation: "US garage rock band",
-      area: "San Francisco",
-      genre: "garage rock",
     });
   });
 
-  it("falls back to the area and leaves missing details out", () => {
-    expect(fromMusicBrainz(fuzzUK)).toEqual({ id: "fuzz-uk", name: "Fuzz", type: "person", area: "United Kingdom" });
+  it("has no label when MusicBrainz has no disambiguation", () => {
+    expect(fromMusicBrainz(fuzzUK)).toEqual({ id: "fuzz-uk", name: "Fuzz", type: "person" });
   });
 });
 
@@ -58,7 +56,9 @@ describe("findSuggestions", () => {
   it("labels graph matches from their own columns without any request", async () => {
     const src = sources([]);
     const local = [{ id: "fuzz-us", name: "Fuzz", type: "group", disambiguation: "US garage rock band", area: "San Francisco" }];
-    expect(await findSuggestions("fuzz", local, true, 8, src)).toEqual(local);
+    expect(await findSuggestions("fuzz", local, true, 8, src)).toEqual([
+      { id: "fuzz-us", name: "Fuzz", type: "group", disambiguation: "US garage rock band" },
+    ]);
     expect(src.searchDb).not.toHaveBeenCalled();
     expect(src.searchMusicBrainz).not.toHaveBeenCalled();
   });
@@ -81,9 +81,11 @@ describe("findSuggestions", () => {
   });
 
   it("uses Postgres while the graph is downloading", async () => {
-    const db = [{ id: "fuzz-us", name: "Fuzz", type: "group", area: "San Francisco" }];
+    const db = [{ id: "fuzz-us", name: "Fuzz", type: "group", disambiguation: "US garage rock band", area: "San Francisco" }];
     const src = sources(db, [fuzzUK]);
-    expect(await findSuggestions("fuzz", null, false, 8, src)).toEqual(db);
+    expect(await findSuggestions("fuzz", null, false, 8, src)).toEqual([
+      { id: "fuzz-us", name: "Fuzz", type: "group", disambiguation: "US garage rock band" },
+    ]);
     expect(src.searchMusicBrainz).not.toHaveBeenCalled();
   });
 
@@ -104,12 +106,13 @@ describe("findSuggestions", () => {
 });
 
 describe("suggestionDetail", () => {
-  it("joins disambiguation, city and genre, skipping parts the disambiguation repeats", () => {
-    expect(suggestionDetail(fromMusicBrainz(fuzzUS))).toBe("US garage rock band · San Francisco");
-    expect(suggestionDetail({ id: "x", name: "X", type: "group", area: "Seattle", genre: "grunge" })).toBe("Seattle · grunge");
+  it("is the MusicBrainz disambiguation, nothing else", () => {
+    expect(suggestionDetail(fromMusicBrainz(fuzzUS))).toBe("US garage rock band");
   });
 
-  it("is null with nothing to show", () => {
+  it("is null when MusicBrainz has no disambiguation (no city or genre instead)", () => {
+    expect(suggestionDetail(fromMusicBrainz(fuzzUK))).toBeNull();
     expect(suggestionDetail({ id: "x", name: "X", type: "group" })).toBeNull();
+    expect(suggestionDetail({ id: "x", name: "X", type: "group", disambiguation: "  " })).toBeNull();
   });
 });

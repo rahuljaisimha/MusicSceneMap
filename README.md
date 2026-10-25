@@ -37,7 +37,7 @@ The app has four features, powered by a precomputed SQLite database (built from 
 
 Search for any artist or band and visualize their network — band members, side projects, and supporting musicians rendered as an interactive force-directed graph. Click nodes to explore further. The legend explains the colours and arrows, and its checkboxes add more kinds of connection: musicians who played or sang on an artist's records, producers, and acts that opened for them.
 
-As you type, a dropdown suggests matching artists from the app's database. Each one is labelled the way MusicBrainz does it, with a note in parentheses (its disambiguation and city), e.g. **Fuzz** (US garage rock band · San Francisco), so you can pick the right one when several artists share a name. Artists the database doesn't have are looked up on MusicBrainz. The same dropdown is on Discover, Similarity and the custom game in Play.
+As you type, a dropdown suggests matching artists from the app's database. Each one is labelled the way MusicBrainz does it, with its disambiguation in parentheses, e.g. **Fuzz** (US garage rock band), so you can pick the right one when several artists share a name. Artists MusicBrainz doesn't disambiguate (like Alex Turner) have no label. Artists the database doesn't have are looked up on MusicBrainz. The same dropdown is on Discover, Similarity and the custom game in Play.
 
 ## Six Degrees of Music (Game)
 

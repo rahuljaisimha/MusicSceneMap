@@ -195,7 +195,9 @@ src/
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas (solid=expanded, outline=unexpanded).
 │   ├── GraphLegend.tsx   — Explore legend: per relationship type a checkbox, colour, arrow direction;
 │   │                       node colours. Types and defaults in src/graph/relationships.ts.
-│   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) for node details.
+│   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) for node details: group/person,
+│   │                       name, MusicBrainz disambiguation, genres (graphDb.getArtistDetails, filled in
+│   │                       once the graph has loaded) and a link to the artist's MusicBrainz page.
 │   ├── SpotifyImportButton.tsx — "Add my Spotify top artists" button for artist-list pages.
 │   │                       Hidden when no Spotify client ID is configured.
 │   └── DebugConsole.tsx  — Collapsible log console, shown when the URL has ?debug=1 or ?debug=true.

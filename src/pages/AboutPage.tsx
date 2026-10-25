@@ -5,14 +5,14 @@ export function AboutPage() {
         <h1 style={styles.title}>About MusicSceneMap</h1>
         <p style={styles.paragraph}>
           MusicSceneMap is a graph-powered music discovery tool that maps the relationships
-          between artists, musicians, and bands. Instead of recommending music based on genre
-          tags or listening history, it reveals the real-world connections — shared band members,
+          between artists, musicians, and groups. Instead of recommending music based on genre
+          tags or listening history, it reveals the real-world connections — shared group members,
           side projects, and collaborations — that create music scenes.
         </p>
 
         <h2 style={styles.heading}>Explore</h2>
         <p style={styles.paragraph}>
-          Search for any artist or band and visualize their network — band members, former members,
+          Search for any artist or group and visualize their network — group members, former members,
           side projects, and supporting musicians rendered as an interactive force-directed graph.
           Click any node to see its connections, then expand further. Your graph persists between
           sessions so you can build up a rich map over time.
@@ -20,14 +20,14 @@ export function AboutPage() {
 
         <h2 style={styles.heading}>Six Degrees of Music</h2>
         <p style={styles.paragraph}>
-          A game that gives you two musicians (or two bands) and challenges you to find a path
-          connecting them through band memberships and supporting roles. The app computes the
+          A game that gives you two musicians (or two groups) and challenges you to find a path
+          connecting them through group memberships and supporting roles. The app computes the
           shortest possible path and shows you a "par" to beat. Navigate by selecting from the
           list of valid connections at each step.
         </p>
         <p style={styles.paragraph}>
           You can start a random game, or create a custom game between any two connected artists
-          or bands (they don't have to be the same type). Every game has a shareable link —
+          or groups (they don't have to be the same type). Every game has a shareable link —
           hit Share to copy a URL that drops a friend into the exact same puzzle.
         </p>
 
@@ -35,7 +35,7 @@ export function AboutPage() {
         <p style={styles.paragraph}>
           Find venues in any city based on artists you like. Enter a city and your favorite
           artists — the app finds venues where they've performed, then automatically expands to
-          related bands for richer recommendations. Data comes from Setlist.fm and is cached
+          related groups for richer recommendations. Data comes from Setlist.fm and is cached
           for future queries.
         </p>
         <p style={styles.paragraph}>
@@ -49,14 +49,14 @@ export function AboutPage() {
         <p style={styles.paragraph}>
           Give the app a list of artists you like plus one artist to compare, and it scores how
           closely that artist fits the group — from 0 (no connection) to 100 (same musical world).
-          The score uses every relationship in the graph: band memberships, former memberships,
+          The score uses every relationship in the graph: group memberships, former memberships,
           supporting roles, and album credits.
         </p>
         <p style={styles.paragraph}>
-          Not all connections count equally. Current band members are the strongest signal, former
+          Not all connections count equally. Current group members are the strongest signal, former
           members slightly less, and supporting musicians less again. Album collaborations are
           weighted by how many credits two artists share. The breakdown shows exactly how each
-          connection was made — the shared bandmates, side projects, and albums that link them —
+          connection was made — the shared members, side projects, and albums that link them —
           so a strong match is never a black box.
         </p>
 
@@ -66,7 +66,7 @@ export function AboutPage() {
           <a href="https://musicbrainz.org" target="_blank" rel="noreferrer" style={styles.link}>
             MusicBrainz
           </a>{" "}
-          data dumps (artist relationships, band members, recording credits) and live data from{" "}
+          data dumps (artist relationships, group members, recording credits) and live data from{" "}
           <a href="https://www.setlist.fm" target="_blank" rel="noreferrer" style={styles.link}>
             Setlist.fm
           </a>{" "}

@@ -270,8 +270,8 @@ function relTypePriority(relType: string): number {
 
 function formatRelType(relType: string, nodeType: string): string {
   switch (relType) {
-    case "member_of": return nodeType === "group" ? "band" : "member";
-    case "former_member_of": return nodeType === "group" ? "former band" : "former member";
+    case "member_of": return nodeType === "group" ? "group" : "member";
+    case "former_member_of": return nodeType === "group" ? "former group" : "former member";
     case "support_musician": return nodeType === "group" ? "supported" : "support musician";
     case "producer": return "producer";
     case "vocal": return "vocals";
@@ -514,7 +514,7 @@ export function PlayPage() {
         <div style={styles.header}>
           <h1 className="page-title" style={styles.title}>Six Degrees of Music</h1>
           <p style={styles.subtitle}>
-            Connect these two {state.startArtist?.type === "group" ? "bands" : "artists"} through the shortest path.
+            Connect these two {state.startArtist?.type === "group" ? "groups" : "artists"} through the shortest path.
           </p>
         </div>
 
@@ -670,7 +670,7 @@ export function PlayPage() {
             {showCustom && (
               <div style={styles.customForm}>
                 <p style={styles.customHint}>
-                  Pick your own start and end — any two artists or bands that are connected.
+                  Pick your own start and end — any two artists or groups that are connected.
                 </p>
                 <ArtistAutocomplete
                   value={customStart}
@@ -679,7 +679,7 @@ export function PlayPage() {
                     setCustomStart(s.name);
                     setCustomStartPick({ id: s.id, name: s.name });
                   }}
-                  placeholder="Start artist or band"
+                  placeholder="Start artist or group"
                   inputStyle={styles.input}
                   ariaLabel="Start artist"
                 />
@@ -690,7 +690,7 @@ export function PlayPage() {
                     setCustomEnd(s.name);
                     setCustomEndPick({ id: s.id, name: s.name });
                   }}
-                  placeholder="End artist or band"
+                  placeholder="End artist or group"
                   inputStyle={styles.input}
                   ariaLabel="End artist"
                 />

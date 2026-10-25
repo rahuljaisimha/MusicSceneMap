@@ -160,7 +160,7 @@ export function ArtistAutocomplete({
                   <span style={styles.name}>{s.name}</span>
                   {detail && <span style={styles.detail}> ({detail})</span>}
                 </span>
-                <span style={styles.type}>{s.type === "group" ? "Band" : "Artist"}</span>
+                <span style={styles.type}>{s.type === "group" ? "Group" : "Artist"}</span>
               </li>
             );
           })}

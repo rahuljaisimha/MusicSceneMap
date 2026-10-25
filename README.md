@@ -21,7 +21,7 @@ The goal is to answer questions like:
 
 or:
 
-> "What bands should I know if I love this scene?"
+> "What groups should I know if I love this scene?"
 
 or:
 
@@ -35,17 +35,17 @@ The app has four features, powered by a precomputed SQLite database (built from 
 
 ## Explore
 
-Search for any artist or band and visualize their network — band members, side projects, and supporting musicians rendered as an interactive force-directed graph. Click a node to see what MusicBrainz says about it (its disambiguation, its genres, and a link to its MusicBrainz page) and to explore further. The legend explains the colours and arrows, and its checkboxes add more kinds of connection: musicians who played or sang on an artist's records, producers, and acts that opened for them.
+Search for any artist or group and visualize their network — group members, side projects, and supporting musicians rendered as an interactive force-directed graph. Click a node to see what MusicBrainz says about it (its disambiguation, its genres, and a link to its MusicBrainz page) and to explore further. The legend explains the colours and arrows, and its checkboxes add more kinds of connection: musicians who played or sang on an artist's records, producers, and acts that opened for them.
 
 As you type, a dropdown suggests matching artists from the app's database. Each one is labelled the way MusicBrainz does it, with its disambiguation in parentheses, e.g. **Fuzz** (US garage rock band), so you can pick the right one when several artists share a name. Artists MusicBrainz doesn't disambiguate (like Alex Turner) have no label. Artists the database doesn't have are looked up on MusicBrainz. The same dropdown is on Discover, Similarity and the custom game in Play.
 
 ## Six Degrees of Music (Game)
 
-A game that gives you two musicians (or two bands) and challenges you to find the path connecting them through band memberships and supporting roles. Navigate by selecting from valid connections at each step. The app computes the shortest path and shows you a "par" to beat. The page opens straight away: a game in progress comes back at once, and a new game's artists fill in as soon as the music graph has downloaded.
+A game that gives you two musicians (or two groups) and challenges you to find the path connecting them through group memberships and supporting roles. Navigate by selecting from valid connections at each step. The app computes the shortest path and shows you a "par" to beat. The page opens straight away: a game in progress comes back at once, and a new game's artists fill in as soon as the music graph has downloaded.
 
 ## Discover
 
-Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related bands for richer recommendations. Powered by Setlist.fm data, cached in a backend database.
+Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related groups for richer recommendations. Powered by Setlist.fm data, cached in a backend database.
 
 Tap **Add my Spotify top artists** to fill the list from your Spotify listening (also on Similarity).
 
@@ -53,7 +53,7 @@ Switch to **Concerts** to see upcoming shows at the city's top venues (from Poll
 
 ## Similarity
 
-Score how closely an artist fits a group of artists you like, from 0 to 100, based on shared band members, collaborations, who opened for whom at concerts, and other connections in the music graph. Artists missing from the built-in graph are looked up from the backend database and MusicBrainz.
+Score how closely an artist fits a group of artists you like, from 0 to 100, based on shared group members, collaborations, who opened for whom at concerts, and other connections in the music graph. Artists missing from the built-in graph are looked up from the backend database and MusicBrainz.
 
 ## Running
 
@@ -91,7 +91,7 @@ npm test          # run all tests once
 npm run test:watch  # re-run on file changes
 ```
 
-The tests cover the Similarity scoring, concert ranking, tiered graph lookups, search resolution and artist-dropdown labels, plus integration-style checks against real MusicBrainz API responses (captured as fixtures in `src/test/fixtures/`, with `fetch` stubbed so tests are offline and deterministic). They lock in specific edge cases that caused repeated bugs — e.g. searching "Fuzz" returning "Buzz Fuzz", multiple artists named "Jack White", and current-vs-former band member deduplication. To refresh a fixture, re-capture the response from the MusicBrainz API for the relevant MBID.
+The tests cover the Similarity scoring, concert ranking, tiered graph lookups, search resolution and artist-dropdown labels, plus integration-style checks against real MusicBrainz API responses (captured as fixtures in `src/test/fixtures/`, with `fetch` stubbed so tests are offline and deterministic). They lock in specific edge cases that caused repeated bugs — e.g. searching "Fuzz" returning "Buzz Fuzz", multiple artists named "Jack White", and current-vs-former group member deduplication. To refresh a fixture, re-capture the response from the MusicBrainz API for the relevant MBID.
 
 ---
 
@@ -99,14 +99,14 @@ The tests cover the Similarity scoring, concert ranking, tiered graph lookups, s
 
 Music discovery often happens through communities.
 
-A listener does not just discover a band because it sounds similar to another band. They discover music through:
+A listener does not just discover a group because it sounds similar to another group. They discover music through:
 
 * seeing an opener at a concert
 * following a musician's side projects
 * exploring a record label
 * visiting a local venue
 * attending a festival
-* finding a band from the same scene
+* finding a group from the same scene
 
 For example:
 
@@ -153,7 +153,7 @@ Recommendations emerge from the structure of the graph.
 
 | Node Type         | Description                        | Example Relationships                                                          |
 | ----------------- | ---------------------------------- | ------------------------------------------------------------------------------ |
-| Artist            | A band or solo project             | toured with, opened for, collaborated with, played venue, appeared at festival |
+| Artist            | A group or solo project            | toured with, opened for, collaborated with, played venue, appeared at festival |
 | Musician          | Individual artists behind projects | member of, former member of, produced, collaborated with                       |
 | Venue             | Physical music locations           | hosted artist, recurring artist, located in city                               |
 | Tour              | Live performance events            | headliner, opener, co-headliner, performed at venue                            |
@@ -326,7 +326,7 @@ Recommend upcoming shows based on scene compatibility rather than popularity.
 
 ## Musician Graph
 
-Discover side projects and related bands through shared members.
+Discover side projects and related groups through shared members.
 
 ## Scene Maps
 

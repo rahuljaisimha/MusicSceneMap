@@ -79,7 +79,7 @@ Explore mode:
           collaborated_with, produced_for, opened_for ticked on in the legend
           (GraphLegend: checkbox, colour and arrow direction per type; node
           colours; remembered in localStorage). Hidden types also hide the artists
-          only they connect. Edges keep their stored direction (member → band, ...)
+          only they connect. Edges keep their stored direction (member → group, ...)
         → In-memory SceneGraph renders as force-directed graph
         → Graph persists in localStorage across sessions
 

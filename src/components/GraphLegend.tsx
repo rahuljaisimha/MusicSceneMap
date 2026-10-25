@@ -31,7 +31,7 @@ export function GraphLegend({ visible, onToggle }: Props) {
         ))}
       </div>
       <div style={{ ...styles.section, ...styles.nodes }}>
-        <span style={styles.nodeRow}><Dot color={NODE_COLORS.artist} filled /> Band</span>
+        <span style={styles.nodeRow}><Dot color={NODE_COLORS.artist} filled /> Group</span>
         <span style={styles.nodeRow}><Dot color={NODE_COLORS.musician} filled /> Person</span>
         <span style={styles.nodeRow}><Dot color="#aaa" filled /> expanded <Dot color="#aaa" /> not yet</span>
       </div>

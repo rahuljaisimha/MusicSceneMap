@@ -13,9 +13,9 @@ export interface RelationshipInfo {
 }
 
 export const EXPLORE_RELATIONSHIPS: RelationshipInfo[] = [
-  { type: "member_of", label: "Member", direction: "member → band", defaultOn: true },
-  { type: "former_member_of", label: "Former member", direction: "member → band", defaultOn: true },
-  { type: "support_musician", label: "Supporting musician", direction: "musician → band", defaultOn: true },
+  { type: "member_of", label: "Member", direction: "member → group", defaultOn: true },
+  { type: "former_member_of", label: "Former member", direction: "member → group", defaultOn: true },
+  { type: "support_musician", label: "Supporting musician", direction: "musician → group", defaultOn: true },
   { type: "collaborated_with", label: "Played or sang on their records", direction: "musician → record's artist", defaultOn: false },
   { type: "produced_for", label: "Produced their records", direction: "producer → record's artist", defaultOn: false },
   { type: "opened_for", label: "Opened for", direction: "opener → headliner", defaultOn: false },

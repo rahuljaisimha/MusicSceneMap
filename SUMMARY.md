@@ -249,8 +249,9 @@ supabase/
 │   ├── 002_crawl_log.sql — Data freshness tracking.
 │   ├── 003_search_misses.sql — Unknown artist query logging.
 │   ├── 004_artist_search.sql — pg_trgm index on artists.name, artists.area column.
-│   └── 005_collaborations.sql — Drops albums + per-album credit rows and two redundant indexes
+│   ├── 005_collaborations.sql — Drops albums + per-album credit rows and two redundant indexes
 │                           (then VACUUM FULL relationships; re-seed; redeploy graph-neighbors).
+│   └── 006_genres.sql      — genres table (id, name) and artists.genre_ids (ids, most voted first).
 ├── config.toml           — Supabase project config.
 └── README.md             — Deployment instructions.
 
@@ -278,8 +279,13 @@ CREATE TABLE nodes (
     name TEXT NOT NULL,
     type TEXT NOT NULL,     -- "person", "group"
     disambiguation TEXT,    -- MusicBrainz comment, e.g. "US garage rock band" (~36% of artists)
-    area TEXT               -- begin area (usually a city), else area (~72% of artists)
+    area TEXT,              -- begin area (usually a city), else area (~72% of artists)
+    genres TEXT             -- genre ids, most voted first, e.g. "412,25,301" (NULL when none)
 );
+
+-- The genres the nodes use. An artist's genres: MusicBrainz genre tags with 2+ votes,
+-- the top 3 plus any tied with the third (process_mb_dump.py pick_genres).
+CREATE TABLE genres (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 
 CREATE TABLE edges (
     source TEXT NOT NULL,
@@ -370,7 +376,7 @@ The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To re
 
 `src/test/similarity.test.ts` unit-tests the Similarity scoring logic (`src/pages/similarity.ts`) against an in-memory fake graph (no sql.js needed). Covers: relationship-weight ordering (member_of > former_member_of > support_musician > album credits), album-credit weighting by shared-credit count with saturation, connection detection (shared bandmates and shared albums), band-tied vs album-only ranking, unreachable artists scoring zero, unknown/not-found artists, breakdown sort order, and the best/average aggregate.
 
-`src/test/artistSuggest.test.ts` covers the artist dropdown: source order (graph labels with no request; Postgres labels by MBID; Postgres while the graph downloads; MusicBrainz only when the database has no match or is down), MusicBrainz field mapping (begin area over area, top tag as genre), and the parenthetical label.
+`src/test/artistSuggest.test.ts` covers the artist dropdown: source order (graph labels with no request; Postgres labels by MBID; Postgres while the graph downloads; MusicBrainz only when the database has no match or is down), MusicBrainz field mapping (type, and the disambiguation only), and the label (the disambiguation, or none).
 
 `src/test/tieredGraphAccess.test.ts` covers the tiered fallback (core → Postgres → MusicBrainz), Tier-2 caching, per-session dedupe, and miss recording. `src/test/searchResolution.test.ts` covers Explore's MBID-vs-name search resolution.
 
@@ -381,7 +387,8 @@ The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To re
 PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venue data.
 
 **Schema** (`supabase/migrations/`):
-- `artists` — mbid, name, type, disambiguation, country, area (migration 004)
+- `artists` — mbid, name, type, disambiguation, country, area (migration 004), genre_ids (migration 006: ids into `genres`, most voted first)
+- `genres` — id, name: the MusicBrainz genres artists use (replaced on each seed; ids follow MusicBrainz's sorted genre list)
 - `venues` — id, name, city, state, country
 - `relationships` — source_id, target_id, rel_type, count. Seeded: band relationships and `collaborated_with` / `produced_for` (count = song credits); `played_at` / `toured_with` from venue-search. Album table and per-album credit rows removed in migration 005.
 - `crawl_log` — artist_mbid, city, last_fetched (tracks data freshness, 14-day stale threshold)

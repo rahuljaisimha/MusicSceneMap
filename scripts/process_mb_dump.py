@@ -26,6 +26,14 @@ artists until it fits; Supabase keeps the full set.
 Edges: band relationships, plus collaborations: a producer / vocal / instrument / performer
 credit on another artist's record becomes one "produced_for" or
 "collaborated_with" edge to that record's artist (see build_collaborations).
+
+Genres: each artist's MusicBrainz genres (tags that are on MusicBrainz's genre
+list) with at least MIN_GENRE_VOTES votes, most voted first: the top
+TOP_GENRES, plus any tied with the last of them (see pick_genres). Votes come
+from the derived dump (mbdump-derived: tag, artist_tag); the genre list is
+fetched once from the MusicBrainz API and cached in scripts/data/genres.txt.
+A genre's id is its position in that sorted list, so the ids can change when
+MusicBrainz adds genres: rebuild the graph and re-seed Postgres together.
 """
 
 import os
@@ -47,6 +55,14 @@ SCRIPT_DIR = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
 DATA_DIR = SCRIPT_DIR / "data"
 OUTPUT_FILE = PROJECT_DIR / "public" / "graph.db"
+
+# Genres (see pick_genres)
+MIN_GENRE_VOTES = 2          # a genre one person tagged is too noisy to keep
+TOP_GENRES = 3               # plus any tied with the third
+GENRE_LIST_URL = "https://musicbrainz.org/ws/2/genre/all?fmt=txt"
+GENRES_FILE = DATA_DIR / "genres.txt"
+DERIVED_TABLES = ["mbdump/tag", "mbdump/artist_tag"]
+USER_AGENT = "MusicSceneMap/0.1 ( https://github.com/rahuljaisimha/MusicSceneMap )"
 
 # Relationship types we care about for artist-to-artist (from MusicBrainz link_type table)
 RELEVANT_ARTIST_ARTIST_TYPES = {
@@ -180,6 +196,81 @@ def download_dump_tables(dump_url: str):
     still_missing = [t for t in tables_needed if not (DATA_DIR / t).exists()]
     if still_missing:
         raise RuntimeError(f"Failed to extract: {still_missing}")
+
+
+def download_derived_tables(dump_url: str):
+    """The tag tables from the derived dump (~0.5 GB, artists' tag votes). Skips if present."""
+    missing = [t for t in DERIVED_TABLES if not (DATA_DIR / t).exists()]
+    if not missing:
+        print("Tag tables already extracted. Skipping the derived dump.")
+        return
+    tar_path = DATA_DIR / "mbdump-derived.tar.bz2"
+    download_file(f"{dump_url}/mbdump-derived.tar.bz2", tar_path)
+    print(f"Extracting {', '.join(missing)} from {tar_path.name}...")
+    # Streamed with Python's bz2 (no bzip2 binary needed); stops once both tables are out.
+    with tarfile.open(tar_path, "r|bz2") as tar:
+        for member in tar:
+            if member.name in missing:
+                print(f"  Extracting: {member.name}")
+                tar.extract(member, DATA_DIR)
+                missing.remove(member.name)
+                if not missing:
+                    break
+    if missing:
+        raise RuntimeError(f"Failed to extract: {missing}")
+    tar_path.unlink()
+
+
+def genre_names() -> list[str]:
+    """MusicBrainz's genre list, sorted. A genre's id is its position + 1.
+    Fetched once (one API request) and cached in GENRES_FILE."""
+    if not GENRES_FILE.exists():
+        print("Fetching MusicBrainz's genre list...")
+        req = urllib.request.Request(GENRE_LIST_URL, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            text = resp.read().decode("utf-8")
+        GENRES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        GENRES_FILE.write_text(text, encoding="utf-8")
+    return sorted({line.strip() for line in GENRES_FILE.read_text(encoding="utf-8").splitlines() if line.strip()})
+
+
+def pick_genres(votes: list[tuple[int, str]]) -> list[str]:
+    """An artist's genres from (votes, genre) pairs: those with MIN_GENRE_VOTES or more,
+    most voted first (ties alphabetical), the top TOP_GENRES plus any tied with the last."""
+    kept = sorted((v for v in votes if v[0] >= MIN_GENRE_VOTES), key=lambda v: (-v[0], v[1]))
+    if len(kept) > TOP_GENRES:
+        cutoff = kept[TOP_GENRES - 1][0]
+        kept = [v for v in kept if v[0] >= cutoff]
+    return [g for _, g in kept]
+
+
+def parse_artist_genres(data_dir: Path, artists: dict[int, dict], names: list[str]) -> int:
+    """Set artists[id]["genres"] to genre ids (most voted first) for artists that have
+    any (see pick_genres). Returns how many artists got genres."""
+    genre_id = {n: i + 1 for i, n in enumerate(names)}
+    tag_genre = {}
+    with open(data_dir / "mbdump" / "tag", "r", encoding="utf-8") as f:
+        for line in f:
+            # id | name | ref_count
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) > 1 and parts[1] in genre_id:
+                tag_genre[int(parts[0])] = parts[1]
+    votes: dict[int, list[tuple[int, str]]] = defaultdict(list)
+    with open(data_dir / "mbdump" / "artist_tag", "r", encoding="utf-8") as f:
+        for line in f:
+            # artist | tag | count | last_updated
+            parts = line.split("\t", 3)
+            tag, count = int(parts[1]), int(parts[2])
+            if tag in tag_genre and count > 0:
+                votes[int(parts[0])].append((count, tag_genre[tag]))
+    n = 0
+    for aid, v in votes.items():
+        picked = pick_genres(v)
+        if picked and aid in artists:
+            artists[aid]["genres"] = [genre_id[g] for g in picked]
+            n += 1
+    print(f"  {n} artists with genres ({len(tag_genre)} genre tags)")
+    return n
 
 
 def parse_link_types(data_dir: Path) -> dict[int, str]:
@@ -671,14 +762,17 @@ def build_graph(
     reachable_gids: set[str],
     output_path: Path,
     meta: dict[str, str] | None = None,
+    genres: list[str] | None = None,
 ):
     """
     Write the browser SQLite graph: reachable artists, band edges between them,
     and collaborations where both artists are reachable.
 
     Schema:
-        nodes(id TEXT PRIMARY KEY, name TEXT, type TEXT, disambiguation TEXT, area TEXT)
+        nodes(id TEXT PRIMARY KEY, name TEXT, type TEXT, disambiguation TEXT, area TEXT, genres TEXT)
             type: "person", "group"; disambiguation/area NULL when MusicBrainz has none
+            genres: genre ids, most voted first ("12,45,301"); NULL when none
+        genres(id INTEGER PRIMARY KEY, name TEXT): the genres the nodes use
         edges(source TEXT, target TEXT, rel_type TEXT)
             rel_type: "member_of", "former_member_of", "support_musician",
                       "collaborated_with", "produced_for" (credited artist -> album artist)
@@ -694,15 +788,29 @@ def build_graph(
     cur = conn.cursor()
     cur.execute("PRAGMA synchronous=OFF")
     cur.execute("CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL,"
-                " disambiguation TEXT, area TEXT)")
+                " disambiguation TEXT, area TEXT, genres TEXT)")
+    cur.execute("CREATE TABLE genres (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
     cur.execute("CREATE TABLE edges (source TEXT NOT NULL, target TEXT NOT NULL, rel_type TEXT NOT NULL)")
     cur.execute("CREATE TABLE graph_meta (key TEXT PRIMARY KEY, value TEXT)")
 
+    used: set[int] = set()
+
+    def node_rows():
+        for d in artists.values():
+            if d["gid"] in reachable_gids:
+                ids = d.get("genres")
+                if ids:
+                    used.update(ids)
+                yield (d["gid"], d["name"], node_type(d["type"]), d["disambiguation"], d["area"],
+                       ",".join(map(str, ids)) if ids else None)
+
     cur.executemany(
-        "INSERT OR IGNORE INTO nodes (id, name, type, disambiguation, area) VALUES (?, ?, ?, ?, ?)",
-        ((d["gid"], d["name"], node_type(d["type"]), d["disambiguation"], d["area"])
-         for d in artists.values() if d["gid"] in reachable_gids))
+        "INSERT OR IGNORE INTO nodes (id, name, type, disambiguation, area, genres) VALUES (?, ?, ?, ?, ?, ?)",
+        node_rows())
     node_count = cur.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    if genres:
+        cur.executemany("INSERT INTO genres (id, name) VALUES (?, ?)",
+                        ((i, genres[i - 1]) for i in sorted(used)))
 
     cur.executemany("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
                     band_edges(relationships, artists, reachable_gids))
@@ -734,6 +842,7 @@ def load_graph_inputs():
         raise RuntimeError("Could not find relevant artist-artist relationship types.")
     links = parse_links(DATA_DIR)
     artists = parse_artists(DATA_DIR, parse_areas(DATA_DIR))
+    parse_artist_genres(DATA_DIR, artists, genre_names())
     relationships = parse_artist_relationships(DATA_DIR, links, link_types, aa_ids)
     credits = parse_artist_recording_relationships(DATA_DIR, links, link_types, ar_ids)
     recording_to_rg, release_groups = build_recording_to_release_group(DATA_DIR)
@@ -763,6 +872,7 @@ def main():
     dump_url = get_latest_dump_url()
     print(f"Latest dump: {dump_url}")
     download_dump_tables(dump_url)
+    download_derived_tables(dump_url)
     print()
     artists, relationships, collaborations, curated, concert = load_graph_inputs()
 
@@ -775,7 +885,8 @@ def main():
                 "musicbrainz_dump": dump_url.rsplit("/", 1)[-1], "curated_seeds": str(len(curated)),
                 "curated_hops": str(CURATED_HOPS), "concertdb_seeds": str(len(concert)),
                 "concertdb_hops": str(hops)}
-        node_count, edge_count = build_graph(artists, relationships, collaborations, reachable, OUTPUT_FILE, meta)
+        node_count, edge_count = build_graph(artists, relationships, collaborations, reachable, OUTPUT_FILE, meta,
+                                             genres=genre_names())
         with open(OUTPUT_FILE, "rb") as f_in, gzip.open(gz_path, "wb", compresslevel=9) as f_out:
             shutil.copyfileobj(f_in, f_out)
         gz_mb = gz_path.stat().st_size / 1e6

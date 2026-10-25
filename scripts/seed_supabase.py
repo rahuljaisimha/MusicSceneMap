@@ -8,7 +8,9 @@ at 6 hops plus every artist with a concert in concert-database at CONCERTDB_HOPS
 down to fit a download size: Postgres answers for the artists graph.db.gz leaves out.
 
 Writes:
-  artists        — every reachable artist (mbid, name, type, disambiguation, area)
+  artists        — every reachable artist (mbid, name, type, disambiguation, area,
+                   genre_ids: ids into `genres`, most voted first; see pick_genres)
+  genres         — every genre an artist uses (id, name), replaced on each run
   relationships  — band relationships between them (member_of, former_member_of,
                    support_musician), and collaborations from each reachable
                    artist to the artists whose records they produced or performed
@@ -38,12 +40,19 @@ import process_mb_dump as mb  # noqa: E402
 
 BATCH_SIZE = 5000
 
-# Needs migration 004 (artists.area).
+# Needs migrations 004 (artists.area) and 006 (genres, artists.genre_ids).
 ARTIST_UPSERT = (
-    "INSERT INTO artists (mbid, name, type, disambiguation, country, area) VALUES %s "
+    "INSERT INTO artists (mbid, name, type, disambiguation, country, area, genre_ids) VALUES %s "
     "ON CONFLICT (mbid) DO UPDATE SET name=EXCLUDED.name, type=EXCLUDED.type, "
-    "disambiguation=EXCLUDED.disambiguation, country=EXCLUDED.country, area=EXCLUDED.area"
+    "disambiguation=EXCLUDED.disambiguation, country=EXCLUDED.country, area=EXCLUDED.area, "
+    "genre_ids=EXCLUDED.genre_ids"
 )
+GENRE_INSERT = "INSERT INTO genres (id, name) VALUES %s"
+
+
+def artist_row(d: dict) -> tuple:
+    return (d["gid"], d["name"], mb.node_type(d["type"]), d["disambiguation"], None, d["area"],
+            d.get("genres") or None)     # NULL, not an empty array, for no genres
 REL_UPSERT = (
     "INSERT INTO relationships (source_id, target_id, rel_type, count) VALUES %s "
     "ON CONFLICT (source_id, target_id, rel_type) DO UPDATE SET count=EXCLUDED.count"
@@ -87,7 +96,7 @@ def main():
     print("MusicSceneMap: Seed Supabase")
     print("=" * 60)
 
-    if not (mb.DATA_DIR / "mbdump" / "artist").exists():
+    if not all((mb.DATA_DIR / t).exists() for t in ["mbdump/artist", *mb.DERIVED_TABLES]):
         print("ERROR: Run 'python3 scripts/process_mb_dump.py' first to download the dump.")
         sys.exit(1)
 
@@ -104,10 +113,19 @@ def main():
         print("\nConnecting to Supabase...")
         conn = psycopg2.connect(db_url)
 
+    # Every genre a seeded artist uses (graph artists and record artists outside it).
+    kept = {k: n for k, n in collaborations.items() if k[0] in reachable}
+    owners = {b for (_, b, _) in kept} - reachable
+    by_gid = {d["gid"]: d for d in artists.values()}
+    names = mb.genre_names()
+    used = sorted({i for g in reachable | owners if g in by_gid for i in by_gid[g].get("genres") or ()})
+    print("\nSeeding genres...")
+    if conn is not None:
+        conn.cursor().execute("DELETE FROM genres")   # ids follow MusicBrainz's list: replace, same transaction
+    insert(conn, GENRE_INSERT, ((i, names[i - 1]) for i in used), "genres")
+
     print("\nSeeding artists...")
-    insert(conn, ARTIST_UPSERT,
-           ((d["gid"], d["name"], mb.node_type(d["type"]), d["disambiguation"], None, d["area"])
-            for d in artists.values() if d["gid"] in reachable), "artists")
+    insert(conn, ARTIST_UPSERT, (artist_row(d) for d in artists.values() if d["gid"] in reachable), "artists")
 
     print("\nSeeding band relationships...")
     insert(conn, REL_UPSERT,
@@ -117,12 +135,7 @@ def main():
     # From a reachable artist to whoever's record it is. The record's artist may be
     # outside the graph: add it as an artist row so the edge resolves.
     print("\nSeeding collaborations...")
-    kept = {k: n for k, n in collaborations.items() if k[0] in reachable}
-    owners = {b for (_, b, _) in kept} - reachable
-    by_gid = {d["gid"]: d for d in artists.values()}
-    insert(conn, ARTIST_UPSERT,
-           ((g, by_gid[g]["name"], mb.node_type(by_gid[g]["type"]), by_gid[g]["disambiguation"], None,
-             by_gid[g]["area"]) for g in owners), "record artists outside the graph")
+    insert(conn, ARTIST_UPSERT, (artist_row(by_gid[g]) for g in owners), "record artists outside the graph")
     insert(conn, REL_UPSERT, ((a, b, rel, n) for (a, b, rel), n in kept.items()), "collaborations")
 
     if conn:

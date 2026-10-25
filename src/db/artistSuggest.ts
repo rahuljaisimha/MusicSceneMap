@@ -20,6 +20,8 @@ export interface ArtistSuggestion {
   type: string;
   /** MusicBrainz's disambiguation comment, the only label shown. */
   disambiguation?: string;
+  /** Came from the MusicBrainz fallback: the app's database doesn't have this artist. */
+  fromMusicBrainz?: true;
 }
 
 const GROUP_TYPES = new Set(["Group", "Orchestra", "Choir"]);
@@ -30,6 +32,7 @@ export function fromMusicBrainz(a: MBArtist): ArtistSuggestion {
     name: a.name,
     type: a.type && GROUP_TYPES.has(a.type) ? "group" : "person",
     ...(a.disambiguation ? { disambiguation: a.disambiguation } : {}),
+    fromMusicBrainz: true,
   };
 }
 

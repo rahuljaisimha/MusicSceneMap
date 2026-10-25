@@ -141,10 +141,17 @@ export function ExplorePage() {
         // Resolve by exact MBID if the query matches the last-clicked node, else by name
         // (a dropdown pick carries its MBID, which is exact too)
         const resolution = resolveSearchTarget(artistName, pickedId ? { name: artistName, id: pickedId } : pendingNode.current);
+        // Captured before the lookup: a miss while the graph is still downloading
+        // went to the server, which says nothing about the graph's coverage.
+        const lookedUpLocally = isDbLoaded();
         const found = await expandArtist(resolution, graph);
         pendingNode.current = null;
         if (!found) {
           setError(`No artist found for "${artistName}"`);
+          if (lookedUpLocally) {
+            const { reportMiss } = await import("../api/supabase");
+            reportMiss(resolution.by === "id" ? resolution.id : artistName, "explore-not-found");
+          }
         } else {
           graph.save();
           setVersion((v) => v + 1);

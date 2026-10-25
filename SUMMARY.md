@@ -239,7 +239,8 @@ supabase/
 │   ├── 004_artist_search.sql — pg_trgm index on artists.name, artists.area column.
 │   ├── 005_collaborations.sql — Drops albums + per-album credit rows and two redundant indexes
 │                           (then VACUUM FULL relationships; re-seed; redeploy graph-neighbors).
-│   └── 006_genres.sql      — genres table (id, name) and artists.genre_ids (ids, most voted first).
+│   ├── 006_genres.sql      — genres table (id, name) and artists.genre_ids (ids, most voted first).
+│   └── 007_search_misses_reader.sql — read-only role concertdb_misses (SELECT on search_misses only).
 ├── config.toml           — Supabase project config.
 └── README.md             — Deployment instructions.
 
@@ -387,7 +388,11 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 - `report-miss` — Lightweight POST endpoint for frontend to report artists missing from browser SQLite.
 - `graph-neighbors` — Tier-2 graph lookup: artist + 1-hop neighbors from Postgres for artists missing from the browser SQLite, and for every lookup while that graph is still downloading. `log=0` skips the miss log. `?q=` is a search mode for the artist dropdowns (ranked matches with disambiguation and area, no neighbors, never logs).
 
-**Search miss tracking**:
+**Search miss tracking** (`search_misses`: query, source). concert-database reads new rows every night
+(`concertdb misses`, read-only role from migration 007), resolves them to MusicBrainz IDs and crawls those
+artists' concerts first, so they join the graph at the next rebuild:
+- `dropdown-musicbrainz-pick` — the user picked an artist only MusicBrainz knows (query = its MBID)
+- `explore-not-found` — an Explore search found nothing in the loaded graph (query = MBID or typed name)
 - `sqlite-missing` — in Supabase DB but not browser SQLite (frontend reports via report-miss)
 - `venue-search-missing-artist` — resolved via MusicBrainz, added to Supabase (edge function logs)
 - `venue-search-not-found` — not found anywhere, likely mistype (edge function logs)

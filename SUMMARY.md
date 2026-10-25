@@ -49,7 +49,9 @@ App loading (lazy, non-blocking):
           call the graph-neighbors edge function with log=0 (no search_misses rows)
         → Explore search, Discover's related-band BFS, Similarity and Concerts
           (via tieredGraphAccess) all work while the download is in progress
-        → Play still waits: game generation needs BFS over the whole graph
+        → Play renders at once: a saved game shows in full (only its moves list
+          waits), a shared link shows curated start/end names, and a new random
+          game shows placeholders until BFS over the whole graph can pick one
 
 Artist dropdown (ArtistAutocomplete, all artist inputs):
     User types ≥2 chars (artistSuggest.findSuggestions; database first)
@@ -167,6 +169,7 @@ src/
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
 │   │                       Supports random, custom (any two connected nodes), and shared (MBID URL) games.
+│   │                       Renders before the graph downloads (skeleton start/end/par/moves until known).
 │   ├── DiscoverPage.tsx  — Venue + concert recommendations. Venues/Concerts toggle. Venues: city + artists
 │   │                       → venues (progressive BFS). Concerts: top venues → Pollstar upcoming events,
 │   │                       ranked by headline-artist similarity (similarity.ts).
@@ -302,7 +305,7 @@ CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (
 ## Key design decisions
 
 - **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~49MB download (gzipped, kept under 74MB; loaded in the background), instant queries.
-- **Lazy graph loading**: Pages never wait for the graph download. It starts in the background after the first render (`preloadDb()` in `main.tsx`), and until it finishes `graphSource.ts` and the tiered access answer from Postgres `graph-neighbors`, which holds the same dataset. Those requests pass `log=0`, and Discover's `sqlite-missing` report only runs when the lookup was checked against the local graph, so nothing is added to `search_misses` while the graph is downloading. Postgres only returns 1-hop neighborhoods, so Similarity scores computed before the download finishes can be less precise. Play is the exception: generating a game needs BFS over the whole graph, so its game card still waits.
+- **Lazy graph loading**: Pages never wait for the graph download. It starts in the background after the first render (`preloadDb()` in `main.tsx`), and until it finishes `graphSource.ts` and the tiered access answer from Postgres `graph-neighbors`, which holds the same dataset. Those requests pass `log=0`, and Discover's `sqlite-missing` report only runs when the lookup was checked against the local graph, so nothing is added to `search_misses` while the graph is downloading. Postgres only returns 1-hop neighborhoods, so Similarity scores computed before the download finishes can be less precise. Play renders immediately too: a saved game (or a reload of one) shows its start, end and path at once, a shared link shows the start and end when they are curated artists, and everything else (a new random game's artists, the par, the list of moves) shows as placeholders until the graph is in, since picking a game and listing moves need the whole graph.
 - **Gzip auto-detection**: Checks first 2 bytes for gzip magic number (1f 8b). Decompresses manually if browser didn't (GitHub Pages). Skips if Vite already decompressed (Content-Encoding: gzip).
 - **Game restricted to band relationships**: BFS and valid moves only use member_of, former_member_of, support_musician. Collaborations and opened_for are not used in gameplay (too loose a tie for the puzzle).
 - **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS. A no-op now that graphs have no album nodes; kept for older graph files.

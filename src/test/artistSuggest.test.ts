@@ -19,17 +19,18 @@ const fuzzUS: MBArtist = {
 const fuzzUK: MBArtist = { id: "fuzz-uk", name: "Fuzz", type: "Person", area: { name: "United Kingdom" } };
 
 describe("fromMusicBrainz", () => {
-  it("maps type and keeps only the disambiguation (no area or tags)", () => {
+  it("maps type, keeps only the disambiguation (no area or tags) and marks it as from MusicBrainz", () => {
     expect(fromMusicBrainz(fuzzUS)).toEqual({
       id: "fuzz-us",
       name: "Fuzz",
       type: "group",
       disambiguation: "US garage rock band",
+      fromMusicBrainz: true,
     });
   });
 
   it("has no label when MusicBrainz has no disambiguation", () => {
-    expect(fromMusicBrainz(fuzzUK)).toEqual({ id: "fuzz-uk", name: "Fuzz", type: "person" });
+    expect(fromMusicBrainz(fuzzUK)).toEqual({ id: "fuzz-uk", name: "Fuzz", type: "person", fromMusicBrainz: true });
   });
 });
 

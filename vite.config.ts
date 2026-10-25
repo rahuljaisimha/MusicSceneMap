@@ -24,20 +24,12 @@ export default defineConfig(({ mode }) => {
   const graphDbCdnUrl =
     process.env.VITE_GRAPH_DB_URL ?? (isCloudflareBuild ? CLOUDFLARE_R2_GRAPH_URL : "");
 
-  // Spotify app client ID for the "Add my Spotify top artists" import (PKCE,
-  // no secret, so it's safe to ship in the bundle). Paste it here or set
-  // VITE_SPOTIFY_CLIENT_ID. Empty = the import button is hidden.
-  const SPOTIFY_CLIENT_ID = "17f075a777004b2abe1f90c8ec5dedee";
-  const spotifyClientId = process.env.VITE_SPOTIFY_CLIENT_ID ?? SPOTIFY_CLIENT_ID;
-
   return {
     plugins: [react()],
     base,
     define: {
       // Inlined at build; read in src/db/graphDb.ts.
       __GRAPH_DB_CDN_URL__: JSON.stringify(graphDbCdnUrl),
-      // Inlined at build; read in src/api/spotify.ts.
-      __SPOTIFY_CLIENT_ID__: JSON.stringify(spotifyClientId),
     },
     server: {
       proxy: {

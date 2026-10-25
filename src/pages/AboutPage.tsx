@@ -85,6 +85,16 @@ export function AboutPage() {
           venue data on demand.
         </p>
 
+        <h2 style={styles.heading}>FAQ</h2>
+        <h3 style={styles.question}>Why can't I import my top artists from Spotify?</h3>
+        <p style={styles.paragraph}>
+          Spotify no longer lets small apps like this one read listening data for the public. Since
+          February 2026, an app in Spotify's Development Mode can be used by at most five people its
+          developer approves by hand, and wider access is only granted to established businesses with
+          a large user base. A Spotify button that works for five people isn't much use, so we
+          removed it. Type the artists you like instead: the dropdown finds them as you type.
+        </p>
+
         <h2 style={styles.heading}>Source Code</h2>
         <p style={styles.paragraph}>
           <a href="https://github.com/rahuljaisimha/MusicSceneMap" target="_blank" rel="noreferrer" style={styles.link}>
@@ -119,6 +129,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: "#e0e0e0",
     marginTop: "1.5rem",
+    marginBottom: "0.5rem",
+  },
+  question: {
+    fontSize: "1rem",
+    fontWeight: 600,
+    color: "#e0e0e0",
     marginBottom: "0.5rem",
   },
   paragraph: {

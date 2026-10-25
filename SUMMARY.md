@@ -4,7 +4,7 @@
 
 A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages and/or Cloudflare (Workers Builds); see `docs/CDN_HOSTING.md`.
 
-Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Discover and Similarity can fill their artist lists from the user's Spotify top artists. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists with their MusicBrainz disambiguation: "Fuzz (US garage rock band)"; artists MusicBrainz doesn't disambiguate get no label.
+Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists with their MusicBrainz disambiguation: "Fuzz (US garage rock band)"; artists MusicBrainz doesn't disambiguate get no label.
 
 ## Tech stack
 
@@ -130,16 +130,6 @@ Discover — Concerts mode (upcoming event recommendations):
         → Pollstar calls run in-browser: ~1 req/sec pacing (first fires ASAP),
           24h localStorage cache. CORS via Vite dev proxy / corsproxy.io in prod.
 
-Spotify import (Discover + Similarity artist lists):
-    User taps "Add my Spotify top artists"
-        → Valid token in localStorage? → GET /v1/me/top/artists (10, medium_term)
-        → Otherwise: PKCE sign-in redirect to Spotify (scope user-top-read),
-          saving the route + current list in sessionStorage
-        → Spotify redirects to the app root with ?code=...
-        → main.tsx handleSpotifyRedirect() restores the route before the router
-          mounts, exchanges the code for a token in the background
-        → The page's button finishes the import: saved list + top artists,
-          deduped case-insensitively
 ```
 
 ## File structure
@@ -198,13 +188,9 @@ src/
 │   ├── InfoPanel.tsx     — Side panel (desktop) / bottom sheet (mobile) for node details: group/person,
 │   │                       name, MusicBrainz disambiguation, genres (graphDb.getArtistDetails, filled in
 │   │                       once the graph has loaded) and a link to the artist's MusicBrainz page.
-│   ├── SpotifyImportButton.tsx — "Add my Spotify top artists" button for artist-list pages.
-│   │                       Hidden when no Spotify client ID is configured.
 │   └── DebugConsole.tsx  — Collapsible log console, shown when the URL has ?debug=1 or ?debug=true.
 ├── api/
 │   ├── supabase.ts       — Client for Supabase edge functions (venue search, aggregation).
-│   ├── spotify.ts        — Spotify PKCE sign-in, token storage/refresh, top-artists fetch.
-│   │                       handleSpotifyRedirect() runs in main.tsx before the router.
 │   ├── pollstar.ts       — Browser Pollstar client: venue autocomplete + upcoming events.
 │   │                       ~1 req/sec pacing (first fires ASAP), 24h cache, CORS via proxy.
 │   ├── musicbrainz.ts    — Live MusicBrainz API client (1 req/sec). Fallback only: Tier-3 lookups and
@@ -332,8 +318,8 @@ CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (
 - **Vite base (host-aware)**: `vite.config.ts` sets `base` by precedence: explicit `DEPLOY_BASE` env var → Cloudflare build (`WORKERS_CI` from Workers Builds, or `CF_PAGES` from Pages) → `/` → GitHub Pages production default `/MusicSceneMap/` → dev `/`. Cloudflare serves at the domain root, so the GitHub Pages base there causes a blank page (404'd assets) — hence the auto-detection. It also inlines the R2 graph URL on Cloudflare builds (see `__GRAPH_DB_CDN_URL__`), since static-assets-only Workers can't hold env vars.
 - **graph.db.gz loader (local-first, CDN fallback)**: `graphDb.ts` tries the same-origin committed file first, then falls back to the CDN URL (`VITE_GRAPH_DB_URL` or the build-time `__GRAPH_DB_CDN_URL__`) if the local file is missing/HTML-fallback. On Cloudflare the local file is excluded from upload via `public/.assetsignore` (25 MiB asset cap), so it loads from R2.
 - **graph.db.gz committed to repo**: Deployed with the site, same origin = no CORS. Fits GitHub's 100MB file limit. **Cloudflare Pages caps static assets at 25 MiB**, below the file size — to deploy there, host `graph.db.gz` on a CDN and set `VITE_GRAPH_DB_URL` (see `docs/CDN_HOSTING.md`). `graphDb.ts` uses `VITE_GRAPH_DB_URL || same-origin file`. **GitHub Releases was tried and rejected**: release-asset URLs 302-redirect to `objects.githubusercontent.com` without reliable `Access-Control-Allow-Origin`, so cross-origin `fetch` fails CORS. Use Cloudflare R2 (free egress, controllable CORS policy, serves raw gzip bytes so the magic-number decompression path still works) or jsDelivr.
-- **Mostly client-side**: The site is static (GitHub Pages / Cloudflare) and graph queries run in the browser. Network calls are limited to Supabase edge functions (venue search, Tier-2 graph lookups, miss reporting), MusicBrainz (Tier-3 fallback), Pollstar (concerts) and Spotify (optional top-artist import).
-- **Spotify import (PKCE, client-side)**: Authorization Code + PKCE needs no client secret, so it fits the static site; the client ID is public and inlined at build (`__SPOTIFY_CLIENT_ID__` in `vite.config.ts`, overridable with `VITE_SPOTIFY_CLIENT_ID`). Sign-in is a full-page redirect (more reliable on phones than a popup), so the button saves the current list and route before leaving and restores both on return. Only the read-only `user-top-read` scope is requested. Tokens live in localStorage and are refreshed with the refresh token; any other in-progress form input (e.g. Discover's city) is not preserved across the first sign-in.
+- **Mostly client-side**: The site is static (GitHub Pages / Cloudflare) and graph queries run in the browser. Network calls are limited to Supabase edge functions (venue search, Tier-2 graph lookups, miss reporting), MusicBrainz (Tier-3 fallback) and Pollstar (concerts).
+- **No Spotify import**: removed. Since February 2026 Spotify's Development Mode allows at most 5 allow-listed users, and Extended Quota Mode is only for established businesses, so a public Spotify top-artists import isn't possible (the About page's FAQ explains this to users).
 - **Game persistence**: 24h in localStorage. New Game clears and regenerates.
 - **Responsive**: Phone layouts come from one `@media (max-width: 640px)` block in `index.css` that targets class hooks on components (inline styles stay the desktop default). Below 640px: hamburger nav, one-row Explore toolbar, bottom-sheet InfoPanel, 44px tap targets, safe-area insets. Tested at 320px and 390px with no horizontal scroll.
 
@@ -415,8 +401,6 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 **Frontend (Cloudflare, Workers Builds)**: Build command `npm run build`, deploy `npx wrangler deploy`, output `dist`. No env vars needed — the build auto-detects Cloudflare (`WORKERS_CI`) to set base `/` and inline the R2 graph URL. `public/.assetsignore` keeps the oversized `graph.db.gz` out of the upload (25 MiB cap); the app loads it from R2. R2 bucket needs public access + a CORS policy allowing the site origins. Full setup in `docs/CDN_HOSTING.md`.
 
 **PR previews**: Cloudflare builds every PR branch with `npx wrangler preview` (needs the `previews` block in `wrangler.jsonc`). The `cloudflare-workers-and-pages` bot comments on the PR with the preview URL and build status.
-
-**Spotify import**: The Spotify app's Client ID is set in `SPOTIFY_CLIENT_ID` in `vite.config.ts` (a new app at developer.spotify.com → Web API needs its own ID pasted there). Add every site URL the app is served from as a Redirect URI. It must match `origin + base` exactly, with no wildcards: e.g. the Cloudflare production URL with a trailing `/`, `https://rahuljaisimha.github.io/MusicSceneMap/`, and `http://127.0.0.1:5173/` for local dev (Spotify rejects `localhost`). PR preview URLs differ per branch, so register a preview's URL to test sign-in there. In Development mode only Spotify accounts added under the app's User Management can sign in.
 
 **Edge Functions** (full list in `supabase/README.md`):
 ```bash

@@ -18,9 +18,3 @@ interface ImportMeta {
  * Empty string when not building for a CDN host (e.g. GitHub Pages / dev).
  */
 declare const __GRAPH_DB_CDN_URL__: string;
-
-/**
- * Build-time Spotify app client ID, injected by vite.config.ts `define`.
- * Empty string when Spotify import isn't configured.
- */
-declare const __SPOTIFY_CLIENT_ID__: string;

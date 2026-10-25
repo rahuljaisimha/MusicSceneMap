@@ -180,3 +180,4 @@ Run in the Supabase SQL Editor (Dashboard → SQL Editor):
 3. `migrations/003_search_misses.sql` — logging unknown artist queries
 4. `migrations/004_artist_search.sql` — trigram index for `graph-neighbors` search mode, `artists.area` (re-run `seed_supabase.py` after it to fill `area`)
 5. `migrations/005_collaborations.sql` — removes the album table and the per-album credit rows (seed_supabase.py now writes `collaborated_with` / `produced_for` artist → artist rows with the song-credit count), and two redundant indexes. Then run `VACUUM FULL relationships;` on its own to give the space back, re-run `seed_supabase.py`, and redeploy `graph-neighbors`.
+6. `migrations/006_genres.sql` — `genres` table and `artists.genre_ids` (MusicBrainz genres with 2+ votes, top 3 plus ties). Then re-run `seed_supabase.py` to fill them.

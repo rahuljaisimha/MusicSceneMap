@@ -24,6 +24,16 @@ Edges: band relationships, and `produced_for` / `collaborated_with` from an
 artist to the artists whose records they produced or sang/played/performed on
 (not between a band and its members: the membership edge covers that).
 
+Genres: each artist's MusicBrainz genres with 2+ votes (a genre one person
+tagged is dropped), most voted first: the top 3, plus any tied with the third
+(Arctic Monkeys: indie rock 19, alternative rock 9, garage rock revival 7,
+post-punk revival 7 → all four). Stored as ids in `nodes.genres` ("412,25")
+with a `genres` table. Votes come from the derived dump's `tag` / `artist_tag`
+tables (`mbdump-derived.tar.bz2`, ~0.5 GB, downloaded once); the genre list is
+one MusicBrainz API request, cached in `scripts/data/genres.txt`. A genre's id
+is its position in that list, so rebuild the graph and re-seed Postgres
+together after deleting the cached list.
+
 ## add_concertdb_edges.py
 
 Adds "opened for" edges (opener → headliner, `rel_type = 'opened_for'`) to
@@ -43,8 +53,10 @@ python3 scripts/add_concertdb_edges.py --ledger ~/concert-database/data/ledger.s
 
 Seeds the Supabase PostgreSQL database with the same artists and edges as the
 browser graph, never cut down for size, with the song-credit count on each
-collaboration. Run `supabase/migrations/005_collaborations.sql` first if the
-database still has the album table.
+collaboration, and each artist's genres (`artists.genre_ids` and the `genres`
+table, replaced on each run). Run `supabase/migrations/005_collaborations.sql`
+first if the database still has the album table, and `006_genres.sql` before
+the first run with genres.
 
 ```bash
 pip install psycopg2-binary

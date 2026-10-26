@@ -115,7 +115,7 @@ Similarity mode (artist-to-scene fit scoring):
         → Loads browser SQLite (same DB as Explore/Play)
         → Weighted graph: each relationship has a weight (REL_WEIGHTS: member_of 1.0,
           former_member_of 0.85, support_musician / collaborated_with / opened_for 0.8,
-          produced_for 0.5), stored as an edge length -ln(weight) (REL_DISTANCES,
+          produced_for 0.3), stored as an edge length -ln(weight) (REL_DISTANCES,
           computed once), so strong ties are short; each hop after the first adds
           HOP_DISTANCE (-ln 0.9)
         → Hub damping (HUB_DAMPED): collaborated_with, produced_for and support_musician
@@ -127,7 +127,9 @@ Similarity mode (artist-to-scene fit scoring):
           MusicBrainz is counted from the links that came with it
         → Repeats (REPEATS, from edges.count): REL_WEIGHTS is a one-time tie. Each extra
           song credit closes 20% of the gap to 1.0 (collaborated_with 0.8 -> 0.97 at 10
-          songs); opened_for is 0.8 once and 0.9 for two shows or more, however many.
+          songs); producing climbs slower to a 0.75 ceiling, below every other
+          relationship (0.30 once, 0.61 an album, 0.71 two); opened_for is 0.8 once and
+          0.9 for two shows or more, however many.
           graph-neighbors returns the count too (Postgres relationships.count)
         → Pair score = 100 x e^(-path length) = the shortest path's (damped) weights
           multiplied x 0.9 per hop after the first. One Dijkstra search from the

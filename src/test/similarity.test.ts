@@ -88,7 +88,7 @@ describe("relWeight", () => {
 
   it("stores each weight as an edge length, -ln(weight)", () => {
     expect(REL_DISTANCES.member_of).toBe(0);
-    expect(REL_DISTANCES.produced_for).toBeCloseTo(-Math.log(0.5));
+    expect(REL_DISTANCES.produced_for).toBeCloseTo(-Math.log(0.3));
     expect(relDistance("totally_unknown")).toBeCloseTo(-Math.log(DEFAULT_REL_WEIGHT));
   });
 });
@@ -255,7 +255,6 @@ describe("collaborations (credits on another artist's records)", () => {
   it("weigh below membership; producing weighs least", () => {
     expect(relWeight("collaborated_with")).toBeLessThan(relWeight("former_member_of"));
     expect(relWeight("produced_for")).toBeLessThan(relWeight("collaborated_with"));
-    expect(relWeight("produced_for")).toBeGreaterThan(relWeight("producer"));
   });
 });
 
@@ -379,16 +378,16 @@ describe("strongest paths", () => {
   it("prefers a longer path of strong ties over a short weak one", () => {
     const pair = computeSimilarity(routes(), "A", ["B"]).pairs[0]!;
     expect(pair.distance).toBe(3);
-    expect(pair.score).toBe(81); // 1 x 1 x 1 x 0.9^2, beats produced_for's 50
+    expect(pair.score).toBe(81); // 1 x 1 x 1 x 0.9^2, beats produced_for's 30
   });
 
   it("damps every hop after the first by HOP_DAMPING", () => {
     const blank = { id: "", name: "", type: "" };
     const step = (relType: string) => ({ from: blank, to: blank, relType, weight: relWeight(relType) });
     expect(pathStrength([])).toBe(1);
-    expect(pathStrength([step("produced_for")])).toBeCloseTo(0.5);
-    expect(pathStrength([step("member_of"), step("member_of"), step("produced_for")])).toBeCloseTo(0.5 * HOP_DAMPING ** 2);
-    expect(pathLength([step("member_of"), step("produced_for")])).toBeCloseTo(-Math.log(0.5) + HOP_DISTANCE);
+    expect(pathStrength([step("produced_for")])).toBeCloseTo(0.3);
+    expect(pathStrength([step("member_of"), step("member_of"), step("produced_for")])).toBeCloseTo(0.3 * HOP_DAMPING ** 2);
+    expect(pathLength([step("member_of"), step("produced_for")])).toBeCloseTo(-Math.log(0.3) + HOP_DISTANCE);
   });
 
   it("doesn't follow paths past MAX_HOPS", () => {
@@ -475,7 +474,17 @@ describe("repeats (song credits, shows)", () => {
     expect(repeatWeight("collaborated_with", 2)).toBeCloseTo(0.84);
     expect(repeatWeight("collaborated_with", 3)).toBeCloseTo(0.872);
     expect(repeatWeight("collaborated_with", 10)).toBeCloseTo(1 - 0.2 * 0.8 ** 9);
-    expect(repeatWeight("produced_for", 3)).toBeCloseTo(1 - 0.5 * 0.8 ** 2);
+    expect(repeatWeight("produced_for", 1)).toBe(0.3);
+    expect(repeatWeight("produced_for", 5)).toBeCloseTo(0.455, 2);
+    expect(repeatWeight("produced_for", 12)).toBeCloseTo(0.609, 2); // an album
+    expect(repeatWeight("produced_for", 24)).toBeCloseTo(0.71, 2);
+  });
+
+  it("never lets producing reach any other relationship's one-time weight", () => {
+    const others = Object.entries(REL_WEIGHTS)
+      .filter(([t]) => ["member_of", "former_member_of", "support_musician", "collaborated_with", "opened_for"].includes(t))
+      .map(([, w]) => w);
+    expect(repeatWeight("produced_for", 100000)).toBeLessThan(Math.min(...others));
     expect(repeatWeight("collaborated_with", 50)).toBeLessThanOrEqual(1);
   });
 

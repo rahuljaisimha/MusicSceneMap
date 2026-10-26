@@ -170,41 +170,62 @@ export function findNodeById(id: string): NodeRecord | null {
  * edge points: true when nodeId is its source. Most relationships read the same
  * either way; "opened_for" goes opener -> headliner.
  */
+type Statement = ReturnType<DB["prepare"]>;
+
+/** Per-type link counts ("<id>|<rel_type>" -> count), worked out once per loaded DB and set of types. */
+let relDegrees: { db: DB; key: string; counts: Map<string, number> } | null = null;
+
+/**
+ * How many `relType` links (either direction) the node has. Counted for all
+ * nodes at once, the first time it's asked, for the given types only (one
+ * query over their edges). Null while the graph hasn't loaded.
+ */
+export function getRelDegree(nodeId: string, relType: string, types: string[]): number | null {
+  if (!db) return null;
+  const key = [...types].sort().join(",");
+  if (relDegrees?.db !== db || relDegrees.key !== key) {
+    const counts = new Map<string, number>();
+    const marks = types.map(() => "?").join(",");
+    const rows = db.exec(
+      `SELECT id, rel_type, COUNT(*) FROM (` +
+        `SELECT source AS id, rel_type FROM edges WHERE rel_type IN (${marks}) ` +
+        `UNION ALL SELECT target AS id, rel_type FROM edges WHERE rel_type IN (${marks})` +
+        `) GROUP BY id, rel_type`,
+      [...types, ...types]
+    )[0]?.values ?? [];
+    for (const [id, t, n] of rows) counts.set(`${id as string}|${t as string}`, n as number);
+    relDegrees = { db, key, counts };
+  }
+  return relDegrees.counts.get(`${nodeId}|${relType}`) ?? 0;
+}
+
+/** getNeighbors' two queries, prepared once per loaded DB: the similarity search calls it thousands of times. */
+let neighborStatements: { db: DB; out: Statement; in: Statement } | null = null;
+
 export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType: string; outgoing: boolean }> {
   if (!db) return [];
+  if (neighborStatements?.db !== db) {
+    neighborStatements = {
+      db,
+      // Edges where this node is the source / the target
+      out: db.prepare("SELECT n.id, n.name, n.type, e.rel_type FROM edges e JOIN nodes n ON n.id = e.target WHERE e.source = ?"),
+      in: db.prepare("SELECT n.id, n.name, n.type, e.rel_type FROM edges e JOIN nodes n ON n.id = e.source WHERE e.target = ?"),
+    };
+  }
 
   const results: Array<{ node: NodeRecord; relType: string; outgoing: boolean }> = [];
-
-  // Edges where this node is the source
-  const stmt1 = db.prepare(
-    "SELECT n.id, n.name, n.type, e.rel_type FROM edges e JOIN nodes n ON n.id = e.target WHERE e.source = ?"
-  );
-  stmt1.bind([nodeId]);
-  while (stmt1.step()) {
-    const row = stmt1.get();
-    results.push({
-      node: { id: row[0] as string, name: row[1] as string, type: row[2] as string },
-      relType: row[3] as string,
-      outgoing: true,
-    });
+  for (const [stmt, outgoing] of [[neighborStatements.out, true], [neighborStatements.in, false]] as const) {
+    stmt.bind([nodeId]);
+    while (stmt.step()) {
+      const row = stmt.get();
+      results.push({
+        node: { id: row[0] as string, name: row[1] as string, type: row[2] as string },
+        relType: row[3] as string,
+        outgoing,
+      });
+    }
+    stmt.reset();
   }
-  stmt1.free();
-
-  // Edges where this node is the target
-  const stmt2 = db.prepare(
-    "SELECT n.id, n.name, n.type, e.rel_type FROM edges e JOIN nodes n ON n.id = e.source WHERE e.target = ?"
-  );
-  stmt2.bind([nodeId]);
-  while (stmt2.step()) {
-    const row = stmt2.get();
-    results.push({
-      node: { id: row[0] as string, name: row[1] as string, type: row[2] as string },
-      relType: row[3] as string,
-      outgoing: false,
-    });
-  }
-  stmt2.free();
-
   return results;
 }
 

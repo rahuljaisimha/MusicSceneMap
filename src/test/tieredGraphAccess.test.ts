@@ -170,3 +170,23 @@ describe("TieredGraphAccess with picked artists (MusicBrainz IDs)", () => {
     expect(mb).toHaveBeenCalledWith({ name: "Rare Act", id: "mb-1" });
   });
 });
+
+describe("TieredGraphAccess link counts (hub damping)", () => {
+  it("counts an out-of-core artist's links from what Postgres returned", async () => {
+    const pg = vi.fn().mockResolvedValue({
+      node: { id: "star", name: "Star", type: "person" },
+      neighbors: [
+        { node: { id: "a", name: "A", type: "person" }, relType: "collaborated_with" },
+        { node: { id: "b", name: "B", type: "person" }, relType: "collaborated_with" },
+        { node: { id: "c", name: "C", type: "group" }, relType: "member_of" },
+      ],
+    });
+    const core: GraphAccess = { ...makeCore(), degree: (id, rel) => (id === "ty" && rel === "collaborated_with" ? 5 : 0) };
+    const tiered = new TieredGraphAccess(core, pg, vi.fn().mockResolvedValue(null));
+    await tiered.prepareArtists(["Star"]);
+    const g = tiered.build();
+    expect(g.degree?.("star", "collaborated_with")).toBe(2);
+    expect(g.degree?.("ty", "collaborated_with")).toBe(5); // core count
+    expect(g.degree?.("a", "collaborated_with")).toBeUndefined(); // only seen as a neighbour
+  });
+});

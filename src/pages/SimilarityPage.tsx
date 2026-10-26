@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { computeSimilarity, type Connection, type PairScore, type SimilarityResult } from "./similarity";
+import { computeSimilarity, HOP_DAMPING, type PairScore, type SimilarityResult } from "./similarity";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { relationSentence } from "../graph/relationships";
@@ -17,26 +17,6 @@ function scoreLabel(score: number): string {
   if (score >= 40) return "Related — shares members or close connections";
   if (score >= 15) return "Loosely connected";
   return "Little to no connection found";
-}
-
-/** Human-readable label for a relationship type. */
-function relLabel(relType: string): string {
-  switch (relType) {
-    case "member_of": return "member";
-    case "former_member_of": return "former member";
-    case "support_musician": return "support musician";
-    case "opened_for": return "opened for / headlined";
-    case "collaborated_with": return "played / sang / performed on records";
-    case "produced_for": return "producer";
-    case "album_credit": return "album credit";
-    case "producer": return "producer";
-    case "vocal": return "vocals";
-    case "instrument": return "instrument";
-    case "mix": return "mixing";
-    case "engineer": return "engineering";
-    case "recording": return "recording";
-    default: return relType.replace(/_/g, " ");
-  }
 }
 
 export function SimilarityPage() {
@@ -217,18 +197,6 @@ export function SimilarityPage() {
                             ? "Same artist"
                             : `${p.distance} hop${p.distance === 1 ? "" : "s"} away`}
                       </div>
-                      {p.connections.length > 0 && (
-                        <div style={styles.connList}>
-                          {p.connections.map((c, ci) => (
-                            <span key={ci} style={styles.connChip} title={`weight ${c.weight.toFixed(2)}`}>
-                              <span style={styles.connRel}>{relLabel(c.relType)}</span>
-                              {c.kind !== "direct" && (
-                                <span style={styles.connVia}> · {c.via}</span>
-                              )}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   )}
                 </>
@@ -264,10 +232,25 @@ export function SimilarityPage() {
   );
 }
 
-function connectionText(c: Connection): string {
-  if (c.kind === "direct") return `Direct: ${relLabel(c.relType)}`;
-  if (c.kind === "shared") return `Both connected to ${c.via} (${relLabel(c.relType)})`;
-  return `Shared albums: ${c.via}`;
+/** "1.00 × 0.45 × 0.45 × 0.9² = 0.16 → 16": how the strongest path's weights make the score. */
+function scoreFormula(pair: PairScore): string {
+  const path = pair.path;
+  if (path == null) return "0";
+  if (path.length === 0) return "Same artist: 100.";
+  const extra = path.length - 1;
+  const damping = extra === 0 ? "" : ` × ${HOP_DAMPING}${extra === 1 ? "" : superscript(extra)}`;
+  const weights = path.map((s) => s.weight.toFixed(2)).join(" × ");
+  return `${weights}${damping} = ${(pair.strength ?? 0).toFixed(2)} → ${pair.score}`;
+}
+
+/** "Damped from 0.80: Taylor Swift has 133 links of this kind": why a hop counts less than its relationship's weight. */
+function hubNote(baseWeight: number, hubs: Array<{ node: { name: string }; count: number }>): string {
+  const who = hubs.map((h) => `${h.node.name} has ${h.count}`).join(", ");
+  return `Damped from ${baseWeight.toFixed(2)}: ${who} links of this kind`;
+}
+
+function superscript(n: number): string {
+  return String(n).replace(/\d/g, (d) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(d)]!);
 }
 
 /**
@@ -287,14 +270,20 @@ function ConnectionPanel({ pair, result, onClose }: { pair: PairScore; result: S
       <h2 style={styles.panelTitle}>{pair.name} → {result.targetName}</h2>
       <section style={styles.sheetSection}>
         {path == null ? (
-          <p style={styles.sheetMuted}>No path within 6 hops.</p>
+          <p style={styles.sheetMuted}>No path within 6 hops strong enough to score 5 or more.</p>
         ) : path.length === 0 ? (
           <p style={styles.sheetMuted}>Same artist.</p>
         ) : (
           <ol style={styles.pathList}>
             {path.map((step, i) => (
               <li key={i} style={styles.pathStep}>
-                {relationSentence(step.relType, step.from.name, step.to.name, step.fromIsSource)}
+                <span style={styles.weightRow}>
+                  <span>{relationSentence(step.relType, step.from.name, step.to.name, step.fromIsSource)}</span>
+                  <span style={styles.weightValue}>{step.weight.toFixed(2)}</span>
+                </span>
+                {step.hubs && step.baseWeight !== undefined && (
+                  <span style={styles.hubNote}>{hubNote(step.baseWeight, step.hubs)}</span>
+                )}
               </li>
             ))}
           </ol>
@@ -303,24 +292,7 @@ function ConnectionPanel({ pair, result, onClose }: { pair: PairScore; result: S
 
       <section style={styles.sheetSection}>
         <h3 style={styles.sheetHeading}>Score</h3>
-        {pair.connections.length > 0 ? (
-          <ul style={styles.weightList}>
-            {pair.connections.map((c, i) => (
-              <li key={i} style={styles.weightRow}>
-                <span>{connectionText(c)}</span>
-                <span style={styles.weightValue}>{c.weight.toFixed(2)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p style={styles.sheetMuted}>No direct or shared connections: the score comes from closeness alone.</p>
-        )}
-        {pair.strength !== undefined && pair.proximity !== undefined && (
-          <p style={styles.sheetMuted}>
-            70% × connection strength {pair.strength.toFixed(2)} + 30% × closeness {pair.proximity.toFixed(2)}
-            {pair.distance ? ` (${pair.distance} hop${pair.distance === 1 ? "" : "s"})` : ""} = {pair.score}
-          </p>
-        )}
+        <p style={styles.sheetMuted}>{scoreFormula(pair)}</p>
       </section>
     </aside>
   );
@@ -367,7 +339,7 @@ const styles: Record<string, React.CSSProperties> = {
   sheetMuted: { fontSize: "0.8rem", color: "#888", margin: 0 },
   pathList: { margin: 0, paddingLeft: "1.25rem", display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.85rem", color: "#e0e0e0" },
   pathStep: { overflowWrap: "anywhere" },
-  weightList: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "0.3rem" },
+  hubNote: { display: "block", fontSize: "0.72rem", color: "#888", marginTop: "0.1rem" },
   weightRow: { display: "flex", justifyContent: "space-between", gap: "0.75rem", fontSize: "0.8rem", color: "#e0e0e0" },
   weightValue: { color: "#48dbfb", fontVariantNumeric: "tabular-nums", flexShrink: 0 },
   pairHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" },
@@ -376,8 +348,4 @@ const styles: Record<string, React.CSSProperties> = {
   pairMissing: { fontSize: "0.75rem", color: "#636e72", fontStyle: "italic" },
   pairDetail: { fontSize: "0.8rem", color: "#888", display: "flex", flexDirection: "column", gap: "0.35rem" },
   pairDistance: { color: "#888" },
-  connList: { display: "flex", flexWrap: "wrap", gap: "0.3rem" },
-  connChip: { padding: "0.15rem 0.5rem", borderRadius: "10px", fontSize: "0.72rem", background: "rgba(72, 219, 251, 0.12)", color: "#48dbfb", border: "1px solid rgba(72, 219, 251, 0.3)" },
-  connRel: { fontWeight: 600, textTransform: "capitalize" },
-  connVia: { color: "#aaa" },
 };

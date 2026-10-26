@@ -21,9 +21,10 @@ export function buildGraphAccess(): GraphAccess {
       return node ? { id: node.id, name: node.name, type: node.type } : null;
     },
     neighbors(nodeId: string): SimNeighbor[] {
-      return getNeighbors(nodeId).map(({ node, relType }) => ({
+      return getNeighbors(nodeId).map(({ node, relType, outgoing }) => ({
         node: { id: node.id, name: node.name, type: node.type },
         relType,
+        outgoing,
       }));
     },
   };

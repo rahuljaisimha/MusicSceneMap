@@ -119,6 +119,11 @@ Similarity mode (artist-to-scene fit scoring):
         → Per-pair score = 70% connection strength + 30% BFS proximity (all rels)
         → Overall = 60% best pair + 40% average (rewards multiple independent paths)
         → Fully client-side; no backend. Weights are placeholders, tunable in similarity.ts
+        → Tapping a breakdown card opens a panel for that pair, styled like Explore's node
+          panel (.info-panel: sidebar on desktop, bottom sheet on phones): the pair's
+          score, the BFS shortest path as sentences read along each edge's direction
+          ("Ty Segall is a member of Fuzz"; relationSentence in graph/relationships.ts),
+          and each connection's weight with the 70/30 sum that makes the pair's score
 
 Discover — Concerts mode (upcoming event recommendations):
     User toggles to "Concerts", enters city + artists

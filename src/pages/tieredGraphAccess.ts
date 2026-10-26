@@ -203,17 +203,19 @@ export async function buildTieredGraphAccess(): Promise<TieredGraphAccess> {
       type: full.type === "Group" ? "group" : "person",
     };
 
+    // `outgoing`: this artist is the edge's source (the member / the supporting musician).
     const neighbors: SimNeighbor[] = [];
-    const push = (a: { id: string; name: string; type?: string }, relType: string) =>
+    const push = (a: { id: string; name: string; type?: string }, relType: string, outgoing: boolean) =>
       neighbors.push({
         node: { id: a.id, name: a.name, type: a.type === "Group" ? "group" : "person" },
         relType,
+        outgoing,
       });
 
-    for (const m of mb.extractBands(full)) push(m.artist, m.current ? "member_of" : "former_member_of");
-    for (const m of mb.extractMembers(full)) push(m.artist, m.current ? "member_of" : "former_member_of");
-    for (const s of mb.extractSupportedBands(full)) push(s.artist, "support_musician");
-    for (const s of mb.extractSupportMusicians(full)) push(s.artist, "support_musician");
+    for (const m of mb.extractBands(full)) push(m.artist, m.current ? "member_of" : "former_member_of", true);
+    for (const m of mb.extractMembers(full)) push(m.artist, m.current ? "member_of" : "former_member_of", false);
+    for (const s of mb.extractSupportedBands(full)) push(s.artist, "support_musician", true);
+    for (const s of mb.extractSupportMusicians(full)) push(s.artist, "support_musician", false);
 
     return { node, neighbors };
   };

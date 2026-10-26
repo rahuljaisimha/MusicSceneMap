@@ -56,6 +56,10 @@ input {
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
 }
+/* Similarity: breakdown cards open the connection panel (Explore's .info-panel) */
+.pair-card:not([aria-expanded="true"]):hover { border-color: #444 !important; }
+.pair-card:focus-visible { outline: 2px solid #48dbfb; outline-offset: 2px; }
+
 .game-buttons button:disabled {
   opacity: 0.45;
   cursor: default;

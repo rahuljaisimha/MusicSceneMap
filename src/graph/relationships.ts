@@ -21,6 +21,28 @@ export const EXPLORE_RELATIONSHIPS: RelationshipInfo[] = [
   { type: "opened_for", label: "Opened for", direction: "opener → headliner", defaultOn: false },
 ];
 
+/**
+ * One edge as a sentence, read the way it points: "Ty Segall is a member of Fuzz".
+ * `fromIsSource` says whether `from` is the edge's source; when it's unknown the
+ * sentence names the relationship without a direction.
+ */
+export function relationSentence(relType: string, from: string, to: string, fromIsSource?: boolean): string {
+  if (fromIsSource === undefined) {
+    const info = EXPLORE_RELATIONSHIPS.find((r) => r.type === relType);
+    return `${from} and ${to}: ${(info?.label ?? relType.replace(/_/g, " ")).toLowerCase()}`;
+  }
+  const [s, t] = fromIsSource ? [from, to] : [to, from];
+  switch (relType) {
+    case "member_of": return `${s} is a member of ${t}`;
+    case "former_member_of": return `${s} was a member of ${t}`;
+    case "support_musician": return `${s} played with ${t} as a supporting musician`;
+    case "collaborated_with": return `${s} played or sang on ${t}'s records`;
+    case "produced_for": return `${s} produced ${t}'s records`;
+    case "opened_for": return `${s} opened for ${t}`;
+    default: return `${s} → ${t} (${relType.replace(/_/g, " ")})`;
+  }
+}
+
 export const DEFAULT_EXPLORE_RELS: EdgeType[] = EXPLORE_RELATIONSHIPS.filter((r) => r.defaultOn).map((r) => r.type);
 
 const STORAGE_KEY = "explore.relTypes";

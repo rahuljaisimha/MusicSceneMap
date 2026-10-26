@@ -29,7 +29,8 @@ export interface GraphNeighborNode {
 export interface GraphNeighborsResponse {
   found: boolean;
   artist: GraphNeighborNode | null;
-  neighbors: Array<{ node: GraphNeighborNode; relType: string }>;
+  /** count: song credits for collaborations (absent from older deployments of the function). */
+  neighbors: Array<{ node: GraphNeighborNode; relType: string; outgoing?: boolean; count?: number }>;
 }
 
 /**

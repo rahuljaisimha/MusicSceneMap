@@ -7,6 +7,8 @@ import {
   pathLength,
   HOP_DISTANCE,
   HUB_DAMPED,
+  REPEATS,
+  repeatWeight,
   reversePath,
   relWeight,
   REL_WEIGHTS,
@@ -463,5 +465,56 @@ describe("hub damping", () => {
 
   it("doesn't damp when the graph can't count links", () => {
     expect(computeSimilarity(hubGraph(false), "Fan", ["Star"]).pairs[0]!.score).toBe(80);
+  });
+});
+
+describe("repeats (song credits, shows)", () => {
+  it("makes a frequent collaborator closer than a one-time one", () => {
+    expect(repeatWeight("collaborated_with", 1)).toBe(0.8);
+    expect(repeatWeight("collaborated_with")).toBe(0.8); // unknown count = once
+    expect(repeatWeight("collaborated_with", 2)).toBeCloseTo(0.84);
+    expect(repeatWeight("collaborated_with", 3)).toBeCloseTo(0.872);
+    expect(repeatWeight("collaborated_with", 10)).toBeCloseTo(1 - 0.2 * 0.8 ** 9);
+    expect(repeatWeight("produced_for", 3)).toBeCloseTo(1 - 0.5 * 0.8 ** 2);
+    expect(repeatWeight("collaborated_with", 50)).toBeLessThanOrEqual(1);
+  });
+
+  it("treats opening twice like opening 400 times, and once as already close", () => {
+    expect(repeatWeight("opened_for", 1)).toBe(0.8);
+    expect(repeatWeight("opened_for", 2)).toBe(0.9);
+    expect(repeatWeight("opened_for", 400)).toBe(0.9);
+    expect("repeated" in REPEATS.opened_for!).toBe(true);
+  });
+
+  it("leaves memberships alone", () => {
+    expect(repeatWeight("member_of", 5)).toBe(1);
+    expect(repeatWeight("former_member_of", 5)).toBe(0.85);
+  });
+
+  it("scores a pair with the repeat-adjusted weight, before hub damping", () => {
+    const n = (id: string): SimNode => ({ id, name: id, type: "group" });
+    const edges: Array<[string, string, string, number]> = [
+      ["Session", "Band", "collaborated_with", 10],
+      ["Guest", "Band", "collaborated_with", 1],
+      ["Opener", "Headliner", "opened_for", 3],
+    ];
+    const g: GraphAccess = {
+      findNodeByName: (name) => n(name),
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t, rel, count] of edges) {
+          if (s === id) out.push({ node: n(t), relType: rel, outgoing: true, count });
+          if (t === id) out.push({ node: n(s), relType: rel, outgoing: false, count });
+        }
+        return out;
+      },
+    };
+    const session = computeSimilarity(g, "Session", ["Band"]).pairs[0]!;
+    const guest = computeSimilarity(g, "Guest", ["Band"]).pairs[0]!;
+    expect(session.score).toBe(97);
+    expect(guest.score).toBe(80);
+    expect(session.path![0]).toMatchObject({ count: 10 });
+    expect(session.path![0]!.baseWeight).toBeCloseTo(repeatWeight("collaborated_with", 10));
+    expect(computeSimilarity(g, "Opener", ["Headliner"]).pairs[0]!.score).toBe(90);
   });
 });

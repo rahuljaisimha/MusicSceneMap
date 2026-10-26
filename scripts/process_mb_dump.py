@@ -773,9 +773,11 @@ def build_graph(
             type: "person", "group"; disambiguation/area NULL when MusicBrainz has none
             genres: genre ids, most voted first ("12,45,301"); NULL when none
         genres(id INTEGER PRIMARY KEY, name TEXT): the genres the nodes use
-        edges(source TEXT, target TEXT, rel_type TEXT)
+        edges(source TEXT, target TEXT, rel_type TEXT, count INTEGER)
             rel_type: "member_of", "former_member_of", "support_musician",
                       "collaborated_with", "produced_for" (credited artist -> album artist)
+            count: song credits for collaborated_with / produced_for; NULL for band edges
+                   (add_concertdb_edges.py sets it to the number of shows for opened_for)
         graph_meta(key TEXT PRIMARY KEY, value TEXT)
         + indexes
     """
@@ -790,7 +792,8 @@ def build_graph(
     cur.execute("CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL,"
                 " disambiguation TEXT, area TEXT, genres TEXT)")
     cur.execute("CREATE TABLE genres (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
-    cur.execute("CREATE TABLE edges (source TEXT NOT NULL, target TEXT NOT NULL, rel_type TEXT NOT NULL)")
+    cur.execute("CREATE TABLE edges (source TEXT NOT NULL, target TEXT NOT NULL, rel_type TEXT NOT NULL,"
+                " count INTEGER)")
     cur.execute("CREATE TABLE graph_meta (key TEXT PRIMARY KEY, value TEXT)")
 
     used: set[int] = set()
@@ -814,8 +817,8 @@ def build_graph(
 
     cur.executemany("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
                     band_edges(relationships, artists, reachable_gids))
-    cur.executemany("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
-                    ((a, b, rel) for (a, b, rel) in collaborations
+    cur.executemany("INSERT INTO edges (source, target, rel_type, count) VALUES (?, ?, ?, ?)",
+                    ((a, b, rel, n) for (a, b, rel), n in collaborations.items()
                      if a in reachable_gids and b in reachable_gids))
     edge_count = cur.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
     cur.executemany("INSERT INTO graph_meta (key, value) VALUES (?, ?)", (meta or {}).items())

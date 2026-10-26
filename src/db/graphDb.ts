@@ -165,11 +165,6 @@ export function findNodeById(id: string): NodeRecord | null {
   return null;
 }
 
-/**
- * Get all neighbors of a node (both directions). `outgoing` says which way the
- * edge points: true when nodeId is its source. Most relationships read the same
- * either way; "opened_for" goes opener -> headliner.
- */
 type Statement = ReturnType<DB["prepare"]>;
 
 /** Per-type link counts ("<id>|<rel_type>" -> count), worked out once per loaded DB and set of types. */
@@ -202,18 +197,29 @@ export function getRelDegree(nodeId: string, relType: string, types: string[]): 
 /** getNeighbors' two queries, prepared once per loaded DB: the similarity search calls it thousands of times. */
 let neighborStatements: { db: DB; out: Statement; in: Statement } | null = null;
 
-export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType: string; outgoing: boolean }> {
+/**
+ * Get all neighbors of a node (both directions). `outgoing` says which way the
+ * edge points: true when nodeId is its source. Most relationships read the same
+ * either way; "opened_for" goes opener -> headliner. `count` is how often (song
+ * credits for collaborations, shows for opened_for); absent for band edges and
+ * in graphs built before edges had a count.
+ */
+export function getNeighbors(
+  nodeId: string
+): Array<{ node: NodeRecord; relType: string; outgoing: boolean; count?: number }> {
   if (!db) return [];
   if (neighborStatements?.db !== db) {
+    const hasCount = db.exec("PRAGMA table_info(edges)")[0]?.values.some((r) => r[1] === "count") ?? false;
+    const count = hasCount ? "e.count" : "NULL";
     neighborStatements = {
       db,
       // Edges where this node is the source / the target
-      out: db.prepare("SELECT n.id, n.name, n.type, e.rel_type FROM edges e JOIN nodes n ON n.id = e.target WHERE e.source = ?"),
-      in: db.prepare("SELECT n.id, n.name, n.type, e.rel_type FROM edges e JOIN nodes n ON n.id = e.source WHERE e.target = ?"),
+      out: db.prepare(`SELECT n.id, n.name, n.type, e.rel_type, ${count} FROM edges e JOIN nodes n ON n.id = e.target WHERE e.source = ?`),
+      in: db.prepare(`SELECT n.id, n.name, n.type, e.rel_type, ${count} FROM edges e JOIN nodes n ON n.id = e.source WHERE e.target = ?`),
     };
   }
 
-  const results: Array<{ node: NodeRecord; relType: string; outgoing: boolean }> = [];
+  const results: Array<{ node: NodeRecord; relType: string; outgoing: boolean; count?: number }> = [];
   for (const [stmt, outgoing] of [[neighborStatements.out, true], [neighborStatements.in, false]] as const) {
     stmt.bind([nodeId]);
     while (stmt.step()) {
@@ -222,6 +228,7 @@ export function getNeighbors(nodeId: string): Array<{ node: NodeRecord; relType:
         node: { id: row[0] as string, name: row[1] as string, type: row[2] as string },
         relType: row[3] as string,
         outgoing,
+        ...(typeof row[4] === "number" ? { count: row[4] } : {}),
       });
     }
     stmt.reset();

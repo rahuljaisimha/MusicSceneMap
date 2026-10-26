@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { computeSimilarity, HOP_DAMPING, type PairScore, type SimilarityResult } from "./similarity";
+import { computeSimilarity, HOP_DAMPING, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { relationSentence } from "../graph/relationships";
@@ -243,10 +243,24 @@ function scoreFormula(pair: PairScore): string {
   return `${weights}${damping} = ${(pair.strength ?? 0).toFixed(2)} → ${pair.score}`;
 }
 
-/** "Damped from 0.80: Taylor Swift has 133 links of this kind": why a hop counts less than its relationship's weight. */
-function hubNote(baseWeight: number, hubs: Array<{ node: { name: string }; count: number }>): string {
-  const who = hubs.map((h) => `${h.node.name} has ${h.count}`).join(", ");
-  return `Damped from ${baseWeight.toFixed(2)}: ${who} links of this kind`;
+/**
+ * Why a hop counts for what it does: how often it happened ("12 songs: 0.80 → 0.97"),
+ * and hub damping ("Damped from 0.97: Taylor Swift has 133 links of this kind").
+ */
+function stepNotes(step: PathStep): string[] {
+  const notes: string[] = [];
+  const base = step.baseWeight ?? step.weight;
+  if (step.count !== undefined) {
+    const unit = step.relType === "opened_for" ? "show" : "song";
+    const times = `${step.count} ${unit}${step.count === 1 ? "" : "s"}`;
+    const plain = REL_WEIGHTS[step.relType];
+    notes.push(plain !== undefined && base > plain ? `${times}: ${plain.toFixed(2)} → ${base.toFixed(2)}` : times);
+  }
+  if (step.hubs) {
+    const who = step.hubs.map((h) => `${h.node.name} has ${h.count}`).join(", ");
+    notes.push(`Damped from ${base.toFixed(2)}: ${who} links of this kind`);
+  }
+  return notes;
 }
 
 function superscript(n: number): string {
@@ -281,9 +295,9 @@ function ConnectionPanel({ pair, result, onClose }: { pair: PairScore; result: S
                   <span>{relationSentence(step.relType, step.from.name, step.to.name, step.fromIsSource)}</span>
                   <span style={styles.weightValue}>{step.weight.toFixed(2)}</span>
                 </span>
-                {step.hubs && step.baseWeight !== undefined && (
-                  <span style={styles.hubNote}>{hubNote(step.baseWeight, step.hubs)}</span>
-                )}
+                {stepNotes(step).map((note) => (
+                  <span key={note} style={styles.hubNote}>{note}</span>
+                ))}
               </li>
             ))}
           </ol>

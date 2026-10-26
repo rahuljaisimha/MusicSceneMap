@@ -29,6 +29,17 @@ export interface SimNode {
 export interface SimNeighbor {
   node: SimNode;
   relType: string;
+  /** True when the looked-up node is the edge's source; undefined when the source doesn't say. */
+  outgoing?: boolean;
+}
+
+/** One hop of a path: `from` and `to` are joined by a `relType` edge. */
+export interface PathStep {
+  from: SimNode;
+  to: SimNode;
+  relType: string;
+  /** True when `from` is the edge's source (e.g. the member, or the opener); undefined when unknown. */
+  fromIsSource?: boolean;
 }
 
 /** Minimal graph interface the scorer depends on. */
@@ -128,6 +139,14 @@ export interface PairScore {
   found: boolean;
   /** Graph distance (hops) to the target over all relationships, or null. */
   distance: number | null;
+  /** The graph artist this name matched (absent when not found). */
+  node?: SimNode;
+  /** A shortest path from this artist to the target, one step per hop ([] for the same artist; null when none). */
+  path?: PathStep[] | null;
+  /** Connection strength, 0..1 (70% of the score). */
+  strength?: number;
+  /** Closeness from the distance, 0..1 (30% of the score). */
+  proximity?: number;
   /** Strongest connections between target and this artist, for display. */
   connections: Connection[];
   /** This pair's contribution to the score, 0..100. */
@@ -136,6 +155,8 @@ export interface PairScore {
 
 export interface SimilarityResult {
   targetName: string;
+  /** The graph artist the target name matched. */
+  target?: SimNode;
   targetFound: boolean;
   overallScore: number;
   pairs: PairScore[];
@@ -147,32 +168,55 @@ const MAX_DISTANCE = 6;
 // --- Graph helpers ----------------------------------------------------------
 
 /**
- * BFS distance (in hops) between two node ids over ALL relationships.
- * Album nodes are traversable connectors. Returns null if unreachable.
+ * A shortest path (BFS) between two nodes over ALL relationships, one step per
+ * hop from `start` to the node with `endId`. Album nodes are traversable
+ * connectors. [] when they're the same node; null if unreachable within maxDepth.
  */
-function bfsDistance(
+export function findPath(
   graph: GraphAccess,
-  startId: string,
+  start: SimNode,
   endId: string,
   maxDepth = MAX_DISTANCE
-): number | null {
-  if (startId === endId) return 0;
-  const visited = new Set<string>([startId]);
-  let frontier = [startId];
+): PathStep[] | null {
+  if (start.id === endId) return [];
+  const cameFrom = new Map<string, PathStep>();
+  const visited = new Set<string>([start.id]);
+  let frontier = [start];
 
   for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const { node: nb } of graph.neighbors(id)) {
+    const next: SimNode[] = [];
+    for (const from of frontier) {
+      for (const { node: nb, relType, outgoing } of graph.neighbors(from.id)) {
         if (visited.has(nb.id)) continue;
-        if (nb.id === endId) return depth;
         visited.add(nb.id);
-        next.push(nb.id);
+        cameFrom.set(nb.id, { from, to: nb, relType, fromIsSource: outgoing });
+        if (nb.id === endId) {
+          const path: PathStep[] = [];
+          for (let id = endId; id !== start.id; ) {
+            const step = cameFrom.get(id)!;
+            path.unshift(step);
+            id = step.from.id;
+          }
+          return path;
+        }
+        next.push(nb);
       }
     }
     frontier = next;
   }
   return null;
+}
+
+/** The same path walked the other way. */
+export function reversePath(path: PathStep[]): PathStep[] {
+  return path
+    .map((s) => ({
+      from: s.to,
+      to: s.from,
+      relType: s.relType,
+      fromIsSource: s.fromIsSource === undefined ? undefined : !s.fromIsSource,
+    }))
+    .reverse();
 }
 
 /**
@@ -297,7 +341,7 @@ export function scorePair(
 ): PairScore {
   const node = graph.findNodeByName(listArtistName);
   if (!node) {
-    return { name: listArtistName, found: false, distance: null, connections: [], score: 0 };
+    return { name: listArtistName, found: false, distance: null, connections: [], score: 0, path: null };
   }
 
   if (node.id === target.id) {
@@ -305,7 +349,11 @@ export function scorePair(
       name: node.name,
       found: true,
       distance: 0,
+      node,
+      path: [],
       connections: [{ kind: "direct", relType: "member_of", via: "same artist", weight: 1 }],
+      strength: 1,
+      proximity: 1,
       score: 100,
     };
   }
@@ -320,7 +368,8 @@ export function scorePair(
     targetDirectToArtist
   );
 
-  const distance = bfsDistance(graph, target.id, node.id);
+  const pathFromTarget = findPath(graph, target, node.id);
+  const distance = pathFromTarget ? pathFromTarget.length : null;
 
   // Connection strength: strongest connection dominates, additional independent
   // connections add with diminishing returns (multiple paths = stronger signal).
@@ -345,7 +394,12 @@ export function scorePair(
     name: node.name,
     found: true,
     distance,
+    node,
+    // Read from the list artist to the target ("how does the artist I like lead to this one").
+    path: pathFromTarget ? reversePath(pathFromTarget) : null,
     connections: connections.slice(0, 5),
+    strength: connectionStrength,
+    proximity,
     score,
   };
 }
@@ -380,7 +434,7 @@ export function computeSimilarity(
   const overallScore = aggregateScore(pairs);
   const sortedPairs = [...pairs].sort((a, b) => b.score - a.score);
 
-  return { targetName: target.name, targetFound: true, overallScore, pairs: sortedPairs };
+  return { targetName: target.name, target, targetFound: true, overallScore, pairs: sortedPairs };
 }
 
 /**

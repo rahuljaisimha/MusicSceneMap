@@ -53,6 +53,8 @@ Switch to **Concerts** to see upcoming shows at the city's top venues (from Poll
 
 Score how closely an artist fits a group of artists you like, from 0 to 100, based on shared group members, collaborations, who opened for whom at concerts, and other connections in the music graph. Artists missing from the built-in graph are looked up from the backend database and MusicBrainz.
 
+Tap an artist in the breakdown to see how it connects to the one you're comparing: the shortest chain of relationships between them, and what each connection added to the score.
+
 ## Running
 
 ```bash

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   computeSimilarity,
   aggregateScore,
+  findPath,
+  reversePath,
   relWeight,
   albumCreditWeight,
   REL_WEIGHTS,
@@ -53,8 +55,8 @@ function makeGraph(): GraphAccess {
     neighbors(nodeId: string): SimNeighbor[] {
       const out: SimNeighbor[] = [];
       for (const [s, t, rel] of edges) {
-        if (s === nodeId) out.push({ node: nodes[t]!, relType: rel });
-        if (t === nodeId) out.push({ node: nodes[s]!, relType: rel });
+        if (s === nodeId) out.push({ node: nodes[t]!, relType: rel, outgoing: true });
+        if (t === nodeId) out.push({ node: nodes[s]!, relType: rel, outgoing: false });
       }
       return out;
     },
@@ -207,8 +209,8 @@ function makeConcertGraph(): GraphAccess {
     neighbors(nodeId) {
       const out: SimNeighbor[] = [];
       for (const [s, t, rel] of edges) {
-        if (s === nodeId) out.push({ node: nodes[t]!, relType: rel });
-        if (t === nodeId) out.push({ node: nodes[s]!, relType: rel });
+        if (s === nodeId) out.push({ node: nodes[t]!, relType: rel, outgoing: true });
+        if (t === nodeId) out.push({ node: nodes[s]!, relType: rel, outgoing: false });
       }
       return out;
     },
@@ -247,5 +249,47 @@ describe("collaborations (credits on another artist's records)", () => {
     expect(relWeight("collaborated_with")).toBeLessThan(relWeight("support_musician"));
     expect(relWeight("produced_for")).toBeLessThan(relWeight("collaborated_with"));
     expect(relWeight("produced_for")).toBeGreaterThan(relWeight("producer"));
+  });
+});
+
+describe("the path behind a pair (shown in its bottom sheet)", () => {
+  it("runs from the liked artist to the compared one, with each edge's direction", () => {
+    // Liked: Charles Moothart; compared: GOGGS. Charles is in Fuzz, Ty is in Fuzz and GOGGS.
+    const res = computeSimilarity(makeGraph(), "GOGGS", ["Charles Moothart"]);
+    const pair = res.pairs[0]!;
+    expect(pair.node?.name).toBe("Charles Moothart");
+    expect(res.target?.name).toBe("GOGGS");
+    expect(pair.distance).toBe(pair.path!.length);
+    const steps = pair.path!.map((s) => [s.from.name, s.relType, s.to.name, s.fromIsSource]);
+    expect(steps[0]![0]).toBe("Charles Moothart");
+    // Every hop continues where the last one ended.
+    pair.path!.forEach((s, i) => {
+      if (i > 0) expect(s.from.id).toBe(pair.path![i - 1]!.to.id);
+    });
+    // The last hop is Ty Segall -> GOGGS, read the way the edge points.
+    expect(steps[steps.length - 1]).toEqual(["Ty Segall", "member_of", "GOGGS", true]);
+  });
+
+  it("keeps the score's two parts", () => {
+    const pair = computeSimilarity(makeGraph(), "Charles Moothart", ["Ty Segall"]).pairs[0]!;
+    expect(pair.score).toBe(Math.round((0.7 * pair.strength! + 0.3 * pair.proximity!) * 100));
+  });
+
+  it("is empty for the same artist and null when unreachable", () => {
+    expect(computeSimilarity(makeGraph(), "Ty Segall", ["Ty Segall"]).pairs[0]!.path).toEqual([]);
+    expect(computeSimilarity(makeGraph(), "Osees", ["Ty Segall"]).pairs[0]!.path).toBeNull();
+  });
+
+  it("reverses a path hop by hop, flipping each direction", () => {
+    const g = makeGraph();
+    const ty = g.findNodeByName("Ty Segall")!;
+    const path = findPath(g, ty, "cfm")!;
+    expect(path.map((s) => s.to.name)).toEqual(["Fuzz", "Charles Moothart", "CFM"]);
+    const back = reversePath(path);
+    expect(back.map((s) => [s.from.name, s.to.name, s.fromIsSource])).toEqual([
+      ["CFM", "Charles Moothart", false],
+      ["Charles Moothart", "Fuzz", true],
+      ["Fuzz", "Ty Segall", false],
+    ]);
   });
 });

@@ -122,11 +122,14 @@ export async function searchVenuesByMbid(artistMbid: string, city: string): Prom
  * Returns aggregated results ranked by total show count across all artists.
  */
 export async function searchVenuesForArtists(
-  artists: string[],
+  artists: Array<{ name: string; id?: string }>,
   city: string
 ): Promise<Array<VenueResult & { artists: string[] }>> {
+  // An artist picked from the dropdown by its MBID: several artists can share a name.
   const results = await Promise.allSettled(
-    artists.map((artist) => searchVenues(artist, city).then((r) => ({ ...r, artistName: artist })))
+    artists.map((a) =>
+      (a.id ? searchVenuesByMbid(a.id, city) : searchVenues(a.name, city)).then((r) => ({ ...r, artistName: a.name }))
+    )
   );
 
   // Aggregate venues across all artists

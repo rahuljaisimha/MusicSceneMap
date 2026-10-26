@@ -4,6 +4,7 @@ import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarE
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { rankConcerts, dedupeEvents, headlineArtist, type RankedConcert } from "./concerts";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
+import { addPicked, chipLabel, fromSuggestion, pickedKey, type PickedArtist } from "./pickedArtists";
 
 type DiscoverMode = "venues" | "concerts";
 
@@ -14,23 +15,22 @@ export function DiscoverPage() {
   const [mode, setMode] = useState<DiscoverMode>("venues");
   const [city, setCity] = useState("");
   const [artistInput, setArtistInput] = useState("");
-  const [artists, setArtists] = useState<string[]>([]);
+  const [artists, setArtists] = useState<PickedArtist[]>([]);
   const [results, setResults] = useState<Array<VenueResult & { artists: string[] }> | null>(null);
   const [concerts, setConcerts] = useState<RankedConcert[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const addArtist = (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    if (!artists.includes(trimmed)) setArtists([...artists, trimmed]);
+  const addArtist = (artist: PickedArtist) => {
+    if (!artist.name.trim()) return;
+    setArtists(addPicked(artists, artist));
     setArtistInput("");
   };
 
-  const handleAddArtist = () => addArtist(artistInput);
+  const handleAddArtist = () => addArtist({ name: artistInput });
 
-  const handleRemoveArtist = (name: string) => {
-    setArtists(artists.filter((a) => a !== name));
+  const handleRemoveArtist = (artist: PickedArtist) => {
+    setArtists(artists.filter((a) => pickedKey(a) !== pickedKey(artist)));
   };
 
   const handleSearch = async () => {
@@ -50,19 +50,22 @@ export function DiscoverPage() {
       // Phase 2: Find connected bands via BFS over the graph. Doesn't wait for
       // the graph download: until it's loaded, graphSource asks the server.
       const { isDbLoaded } = await import("../db/graphDb");
-      const { findArtist, getArtistNeighbors } = await import("../db/graphSource");
+      const { findArtist, findArtistById, getArtistNeighbors } = await import("../db/graphSource");
       const { reportMiss } = await import("../api/supabase");
 
       // Captured before the lookups: if they went to the server, their misses
       // say nothing about SQLite coverage, even if the download finishes meanwhile.
       const lookedUpLocally = isDbLoaded();
-      const startNodes = await Promise.all(artists.map((artist) => findArtist(artist).catch(() => null)));
+      // A picked artist by its MusicBrainz ID (several can share a name); a typed one by name.
+      const startNodes = await Promise.all(
+        artists.map((a) => (a.id ? findArtistById(a.id) : findArtist(a.name)).catch(() => null))
+      );
 
       // Report artists missing from SQLite (for future SQLite updates). Only
       // when checked against the local graph; skipped while it's downloading.
       if (lookedUpLocally) {
         artists.forEach((artist, i) => {
-          if (!startNodes[i]) reportMiss(artist, "sqlite-missing");
+          if (!startNodes[i]) reportMiss(artist.id ?? artist.name, "sqlite-missing");
         });
       }
 
@@ -95,7 +98,7 @@ export function DiscoverPage() {
           visited.add(neighbor.id);
           queue.push(neighbor.id);
 
-          if (neighbor.type === "group" && !artists.includes(neighbor.name)) {
+          if (neighbor.type === "group" && !artists.some((a) => a.name === neighbor.name)) {
             connectedBands.push({ name: neighbor.name, mbid: neighbor.id });
             if (connectedBands.length >= 5) break;
           }
@@ -220,7 +223,7 @@ export function DiscoverPage() {
       const headliners = events
         .map((e) => headlineArtist(e))
         .filter((n): n is string => Boolean(n));
-      await tiered.prepareArtists([...new Set([...artists, ...headliners])]);
+      await tiered.prepareArtists([...artists, ...headliners]);
       const ranked = rankConcerts(tiered.build(), events, artists);
       setConcerts(ranked);
       setLoading(false);
@@ -282,7 +285,7 @@ export function DiscoverPage() {
               <ArtistAutocomplete
                 value={artistInput}
                 onChange={setArtistInput}
-                onSelect={(a) => addArtist(a.name)}
+                onSelect={(a) => addArtist(fromSuggestion(a))}
                 onEnter={handleAddArtist}
                 placeholder="Add an artist..."
                 inputStyle={styles.input}
@@ -301,14 +304,14 @@ export function DiscoverPage() {
             {artists.length > 0 && (
               <div style={styles.chipList}>
                 {artists.map((a) => (
-                  <span key={a} style={styles.chip}>
-                    {a}
+                  <span key={pickedKey(a)} style={styles.chip} title={a.disambiguation}>
+                    {chipLabel(a, artists)}
                     <button
                       type="button"
                       onClick={() => handleRemoveArtist(a)}
                       className="chip-remove"
                       style={styles.chipRemove}
-                      aria-label={`Remove ${a}`}
+                      aria-label={`Remove ${chipLabel(a, artists)}`}
                     >
                       ×
                     </button>

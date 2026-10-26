@@ -68,8 +68,12 @@ Artist dropdown (ArtistAutocomplete, all artist inputs):
         → Shows "Searching…" / "No matching artists" / "Couldn't load suggestions";
           re-runs when the graph finishes loading. Browser MusicBrainz calls send no
           custom headers (a User-Agent header would force a CORS preflight)
-        → A pick carries the MBID: Explore and Play's custom game resolve by ID;
-          Discover/Similarity add the name (they still resolve by name)
+        → A pick carries the MBID, and every page resolves a pick by ID, never by name
+          (several artists share a name: "Fuzz" the USA rock band vs. Disturbed's bassist).
+          Discover/Similarity keep picks as PickedArtist (pickedArtists.ts); the scorer
+          takes ArtistRef (name or {name, id}) and GraphAccess.findNodeById; the tiered
+          access fetches a pick from Postgres/MusicBrainz by MBID; Discover's venue search
+          and related-group BFS start from the MBID. Typed-and-added names still go by name
 
 Explore mode:
     User searches artist (or picks from the dropdown)

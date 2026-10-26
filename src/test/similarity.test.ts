@@ -293,3 +293,53 @@ describe("the path behind a pair (shown in its bottom sheet)", () => {
     ]);
   });
 });
+
+describe("artists picked from the dropdown (by MusicBrainz ID)", () => {
+  /** Two artists named Fuzz: the band Ty Segall is in, and an unrelated bassist listed first. */
+  function twoFuzzes(): GraphAccess {
+    const nodes: SimNode[] = [
+      { id: "fuzz-bassist", name: "Fuzz", type: "person" },
+      { id: "fuzz-band", name: "Fuzz", type: "group" },
+      { id: "ty", name: "Ty Segall", type: "person" },
+      { id: "disturbed", name: "Disturbed", type: "group" },
+    ];
+    const edges: Array<[string, string, string]> = [
+      ["ty", "fuzz-band", "member_of"],
+      ["fuzz-bassist", "disturbed", "former_member_of"],
+    ];
+    const byId = (id: string) => nodes.find((n) => n.id === id) ?? null;
+    return {
+      findNodeByName: (name) => nodes.find((n) => n.name.toLowerCase() === name.toLowerCase()) ?? null,
+      findNodeById: byId,
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t, rel] of edges) {
+          if (s === id) out.push({ node: byId(t)!, relType: rel, outgoing: true });
+          if (t === id) out.push({ node: byId(s)!, relType: rel, outgoing: false });
+        }
+        return out;
+      },
+    };
+  }
+
+  it("scores the picked artist, not the first one with its name", () => {
+    const byName = computeSimilarity(twoFuzzes(), "Ty Segall", ["Fuzz"]).pairs[0]!;
+    expect(byName.node?.id).toBe("fuzz-bassist");
+    expect(byName.path).toBeNull();
+
+    const picked = computeSimilarity(twoFuzzes(), "Ty Segall", [{ name: "Fuzz", id: "fuzz-band" }]).pairs[0]!;
+    expect(picked.node?.id).toBe("fuzz-band");
+    expect(picked.distance).toBe(1);
+    expect(picked.score).toBe(100);
+  });
+
+  it("resolves a picked target by ID too", () => {
+    const res = computeSimilarity(twoFuzzes(), { name: "Fuzz", id: "fuzz-band" }, ["Ty Segall"]);
+    expect(res.target?.id).toBe("fuzz-band");
+  });
+
+  it("doesn't fall back to the name when the picked ID isn't in the graph", () => {
+    const res = computeSimilarity(twoFuzzes(), "Ty Segall", [{ name: "Fuzz", id: "not-in-graph" }]);
+    expect(res.pairs[0]).toMatchObject({ name: "Fuzz", found: false });
+  });
+});

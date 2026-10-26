@@ -115,7 +115,7 @@ def main():
 
     # Every genre a seeded artist uses (graph artists and record artists outside it).
     kept = {k: n for k, n in collaborations.items() if k[0] in reachable}
-    owners = {b for (_, b, _) in kept} - reachable
+    owners = mb.record_artists(collaborations, reachable)
     by_gid = {d["gid"]: d for d in artists.values()}
     names = mb.genre_names()
     used = sorted({i for g in reachable | owners if g in by_gid for i in by_gid[g].get("genres") or ()})

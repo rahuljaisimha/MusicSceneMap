@@ -19,9 +19,11 @@ Requirements:
 
 Which artists: every artist within 6 hops of the curated seeds (src/game/artists.ts, by MBID)
 and of each artist with a concert in concert-database (CONCERTDB_HOPS, default 6),
-over band relationships (member of / supporting musician). If graph.db.gz comes
-out over MAX_GZIP_MB, it is rebuilt with one hop fewer around concert-database's
-artists until it fits; Supabase keeps the full set.
+over band relationships (member of / supporting musician), plus the artists whose
+records they played on or produced (record_artists: e.g. Zach Bryan, reached only
+through the musicians on his records). If graph.db.gz comes out over MAX_GZIP_MB,
+it is rebuilt with one hop fewer around concert-database's artists until it fits;
+Supabase keeps the full set.
 
 Edges: band relationships, plus collaborations: a producer / vocal / instrument / performer
 credit on another artist's record becomes one "produced_for" or
@@ -694,6 +696,16 @@ def seed_budgets(curated: set[str], concert: set[str], concert_hops: int) -> dic
     return budgets
 
 
+def record_artists(collaborations: dict[tuple[str, str, str], int], reachable: set[str]) -> set[str]:
+    """Artists outside `reachable` whose records a reachable artist played on or produced.
+
+    The browser graph and Postgres both include them (with those collaborations),
+    so an artist known only through the records others worked on (e.g. Zach Bryan,
+    whose records Bruce Springsteen and Kyle Nix played on) is there too.
+    """
+    return {owner for (credited, owner, _) in collaborations if credited in reachable} - reachable
+
+
 def bfs_reachable(
     budgets: dict[str, int],
     relationships: list[tuple[int, int, str, bool]],
@@ -884,12 +896,14 @@ def main():
     for hops in range(args.concertdb_hops, -1, -1):
         print(f"\nconcert-database artists at {hops} hops (curated seeds at {CURATED_HOPS}):")
         reachable = bfs_reachable(seed_budgets(curated, concert, hops), relationships, artists)
+        owners = record_artists(collaborations, reachable)
+        print(f"  + {len(owners)} record artists outside it (their records' credits are in the graph)")
         meta = {"built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 "musicbrainz_dump": dump_url.rsplit("/", 1)[-1], "curated_seeds": str(len(curated)),
                 "curated_hops": str(CURATED_HOPS), "concertdb_seeds": str(len(concert)),
-                "concertdb_hops": str(hops)}
-        node_count, edge_count = build_graph(artists, relationships, collaborations, reachable, OUTPUT_FILE, meta,
-                                             genres=genre_names())
+                "concertdb_hops": str(hops), "record_artists": str(len(owners))}
+        node_count, edge_count = build_graph(artists, relationships, collaborations, reachable | owners, OUTPUT_FILE,
+                                             meta, genres=genre_names())
         with open(OUTPUT_FILE, "rb") as f_in, gzip.open(gz_path, "wb", compresslevel=9) as f_out:
             shutil.copyfileobj(f_in, f_out)
         gz_mb = gz_path.stat().st_size / 1e6

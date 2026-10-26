@@ -6,16 +6,22 @@
  * over a small `GraphAccess` interface so it can be unit-tested with an in-memory
  * fake. The SimilarityPage wires the real graphDb helpers into this interface.
  *
- * Similarity philosophy (per the project thesis): two artists are similar when
- * they share musicians, collaborators and history, and the signal is stronger
- * when *multiple independent paths* connect them. We now use *all* parts of the
- * graph — band memberships, support roles, and album credits — and weight each
- * connection by its relationship type:
+ * The graph is treated as a weighted graph: each relationship has a weight
+ * (REL_WEIGHTS, 0..1; a band membership is 1.0, producing someone's records
+ * 0.5), stored as an edge length −ln(weight) (REL_DISTANCES), so strong ties are
+ * short. Every hop after the first also adds HOP_DISTANCE (−ln 0.9), so a chain
+ * of members doesn't stay at 100 forever. Two artists are as close as the
+ * shortest path between them:
  *
- *   member_of        > former_member_of > support_musician   (band ties)
- *   album credits     scored by the number of shared credits (collaboration)
+ *   pair score = 100 × e^(−path length)
+ *              = 100 × (weights along the path, multiplied) × 0.9^(hops − 1)
  *
- * The weights below are PLACEHOLDER values, intended to be tuned later.
+ * Examples: Ty Segall — member — Fuzz = 100; Charles Moothart — member — Fuzz —
+ * member — Ty Segall = 90; Tim Hellman — member — Osees ← opened for — Iguana
+ * Death Cult = 1.0 × 0.8 × 0.9 = 72.
+ *
+ * One search (Dijkstra from the compared artist) finds the strongest path to
+ * every liked artist. The weights are placeholders, intended to be tuned.
  */
 
 /** A node in the graph as exposed to the scorer. */
@@ -38,6 +44,12 @@ export interface PathStep {
   from: SimNode;
   to: SimNode;
   relType: string;
+  /** The weight this hop counted for, 0..1: REL_WEIGHTS, damped for hub artists (see HUB_DAMPED). */
+  weight: number;
+  /** The relationship's undamped weight (REL_WEIGHTS). Defaults to `weight`. */
+  baseWeight?: number;
+  /** The hub artists that damped this hop: their count of this kind of link. */
+  hubs?: Array<{ node: SimNode; count: number }>;
   /** True when `from` is the edge's source (e.g. the member, or the opener); undefined when unknown. */
   fromIsSource?: boolean;
 }
@@ -68,6 +80,11 @@ export interface GraphAccess {
    * Includes album nodes — the scorer decides how to use them.
    */
   neighbors(nodeId: string): SimNeighbor[];
+  /**
+   * How many `relType` links a node has (both directions), for hub damping.
+   * Optional; undefined when unknown, and then the hop isn't damped.
+   */
+  degree?(nodeId: string, relType: string): number | undefined;
 }
 
 /** The node an artist reference means: by ID when it has one (and the graph can look ids up), else by name. */
@@ -76,7 +93,6 @@ export function resolveArtist(graph: GraphAccess, ref: ArtistRef): SimNode | nul
   if (id && graph.findNodeById) return graph.findNodeById(id);
   return graph.findNodeByName(refName(ref));
 }
-
 // --- Relationship weights (PLACEHOLDER — tune later) ------------------------
 
 /**
@@ -86,14 +102,13 @@ export function resolveArtist(graph: GraphAccess, ref: ArtistRef): SimNode | nul
  */
 export const REL_WEIGHTS: Record<string, number> = {
   member_of: 1.0, // current band member — strongest tie
-  former_member_of: 0.75, // former member — slightly less
-  support_musician: 0.6, // supporting/touring musician — slightly less again
-  collaborator: 0.5, // album co-credit between two people (graphs built before collaborated_with)
-  collaborated_with: 0.5, // sang, played or performed on the other artist's records (count = song credits)
-  produced_for: 0.45, // produced the other artist's records
-  opened_for: 0.45, // one act opened for the other (concert-database; placeholder)
-  // Album-credit relationship types. Each is a comparatively weak single tie;
-  // strength accrues via the *count* of shared credits (see ALBUM_CREDIT_*).
+  former_member_of: 0.85, // former member
+  support_musician: 0.8, // touring or supporting musician
+  collaborator: 0.8, // album co-credit between two people (graphs built before collaborated_with)
+  collaborated_with: 0.8, // sang, played or performed on the other artist's records
+  produced_for: 0.5, // produced the other artist's records
+  opened_for: 0.8, // opened for the headliner at least once (concert-database)
+  // Album credits (person -> album), from older graphs that had album nodes.
   producer: 0.4,
   vocal: 0.35,
   instrument: 0.35,
@@ -105,55 +120,51 @@ export const REL_WEIGHTS: Record<string, number> = {
 /** Fallback weight for any relationship type not in REL_WEIGHTS. */
 export const DEFAULT_REL_WEIGHT = 0.25;
 
-/** Relationship types that connect a person/group directly to another (non-album). */
-export const BAND_REL_TYPES = new Set([
-  "member_of",
-  "former_member_of",
-  "support_musician",
-]);
-
-/** Relationship types that represent an album credit (person <-> album). */
-export const ALBUM_CREDIT_REL_TYPES = new Set([
-  "producer",
-  "vocal",
-  "instrument",
-  "mix",
-  "engineer",
-  "recording",
-]);
-
-/**
- * Album-credit collaboration weighting. Two artists who both have credits on
- * the same album(s) are collaborators; the strength grows with the number of
- * shared album credits but saturates (diminishing returns).
- *   1 shared credit  -> ~0.30, 2 -> ~0.45, 4 -> ~0.60, many -> ALBUM_CREDIT_MAX
- */
-export const ALBUM_CREDIT_MAX = 0.7;
-export const ALBUM_CREDIT_HALF = 3; // credits at which we reach half of the max
-
 export function relWeight(relType: string): number {
   return REL_WEIGHTS[relType] ?? DEFAULT_REL_WEIGHT;
 }
 
-/** Convert a shared-album-credit count into a 0..ALBUM_CREDIT_MAX weight. */
-export function albumCreditWeight(sharedCredits: number): number {
-  if (sharedCredits <= 0) return 0;
-  return ALBUM_CREDIT_MAX * (sharedCredits / (sharedCredits + ALBUM_CREDIT_HALF));
+/**
+ * Each weight as an edge length, −ln(weight), worked out once when this module
+ * loads: the search only adds lengths up. A weight of 1.0 is length 0.
+ */
+export const REL_DISTANCES: Record<string, number> = Object.fromEntries(
+  Object.entries(REL_WEIGHTS).map(([type, w]) => [type, Math.log(1 / w)])
+);
+const DEFAULT_REL_DISTANCE = Math.log(1 / DEFAULT_REL_WEIGHT);
+
+export function relDistance(relType: string): number {
+  return REL_DISTANCES[relType] ?? DEFAULT_REL_DISTANCE;
+}
+
+// --- Hub damping --------------------------------------------------------------
+
+/**
+ * Relationships weakened at artists with many of them: being one of Taylor
+ * Swift's 133 collaborators says less than being one of King Gizzard's 6. At
+ * each end of such a hop the weight is multiplied by (typical / count)^exponent
+ * when the artist has more than `typical` links of that kind (never above 1).
+ * `typical` is roughly the 90th percentile of the count in the graph.
+ * Memberships and opened_for aren't damped: those are strong signals however
+ * many an artist has.
+ */
+export const HUB_DAMPED: Record<string, { typical: number; exponent: number }> = {
+  collaborated_with: { typical: 14, exponent: 1 },
+  produced_for: { typical: 6, exponent: 1 },
+  support_musician: { typical: 2, exponent: 1 },
+};
+export const HUB_DAMPED_TYPES = Object.keys(HUB_DAMPED);
+
+/** The length a hub adds to a hop: −ln((typical / count)^exponent), 0 when not a hub. */
+function hubLength(graph: GraphAccess, node: SimNode, relType: string): { length: number; count?: number } {
+  const rule = HUB_DAMPED[relType];
+  if (!rule || !graph.degree) return { length: 0 };
+  const count = graph.degree(node.id, relType);
+  if (count === undefined || count <= rule.typical) return { length: 0 };
+  return { length: rule.exponent * Math.log(count / rule.typical), count };
 }
 
 // --- Result shapes ----------------------------------------------------------
-
-/** A single connection between the target and a list artist, for display. */
-export interface Connection {
-  /** "direct" (edge between the two), "shared" (common neighbor), or "album". */
-  kind: "direct" | "shared" | "album";
-  /** Relationship type driving this connection (or "album_credit"). */
-  relType: string;
-  /** Human-readable label, e.g. a shared bandmate or album name. */
-  via: string;
-  /** Weight this connection contributed, 0..1. */
-  weight: number;
-}
 
 /** Per-list-artist contribution to the overall similarity. */
 export interface PairScore {
@@ -161,19 +172,15 @@ export interface PairScore {
   name: string;
   /** Whether the list artist was found in the graph. */
   found: boolean;
-  /** Graph distance (hops) to the target over all relationships, or null. */
+  /** Hops along the strongest path to the target, or null when none was found. */
   distance: number | null;
   /** The graph artist this name matched (absent when not found). */
   node?: SimNode;
-  /** A shortest path from this artist to the target, one step per hop ([] for the same artist; null when none). */
+  /** The strongest path from this artist to the target ([] for the same artist; null when none). */
   path?: PathStep[] | null;
-  /** Connection strength, 0..1 (70% of the score). */
+  /** That path's strength, 0..1 (the score / 100 before rounding). */
   strength?: number;
-  /** Closeness from the distance, 0..1 (30% of the score). */
-  proximity?: number;
-  /** Strongest connections between target and this artist, for display. */
-  connections: Connection[];
-  /** This pair's contribution to the score, 0..100. */
+  /** This pair's score, 0..100. */
   score: number;
 }
 
@@ -186,253 +193,163 @@ export interface SimilarityResult {
   pairs: PairScore[];
 }
 
-/** How many hops out to explore when measuring distance. */
-const MAX_DISTANCE = 6;
+// --- Strongest paths --------------------------------------------------------
 
-// --- Graph helpers ----------------------------------------------------------
+/** Each hop past the first multiplies a path's strength by this... */
+export const HOP_DAMPING = 0.9;
+/** ...that is, adds this much length. */
+export const HOP_DISTANCE = Math.log(1 / HOP_DAMPING);
+/** Paths longer than this many hops aren't followed. */
+export const MAX_HOPS = 6;
+/** Paths weaker than this (a score under 5) aren't followed: such a pair scores 0, "no path". */
+export const MIN_STRENGTH = 0.05;
+const MAX_LENGTH = Math.log(1 / MIN_STRENGTH);
+/** At most this many artists are expanded per search, to bound the time a search can take. */
+export const MAX_EXPANDED = 10000;
 
-/**
- * A shortest path (BFS) between two nodes over ALL relationships, one step per
- * hop from `start` to the node with `endId`. Album nodes are traversable
- * connectors. [] when they're the same node; null if unreachable within maxDepth.
- */
-export function findPath(
-  graph: GraphAccess,
-  start: SimNode,
-  endId: string,
-  maxDepth = MAX_DISTANCE
-): PathStep[] | null {
-  if (start.id === endId) return [];
-  const cameFrom = new Map<string, PathStep>();
-  const visited = new Set<string>([start.id]);
-  let frontier = [start];
+/** A path's length: each hop's −ln(weight) plus HOP_DISTANCE per hop after the first. 0 for []. */
+export function pathLength(path: PathStep[]): number {
+  return path.reduce((d, step, i) => d + Math.log(1 / step.weight) + (i > 0 ? HOP_DISTANCE : 0), 0);
+}
 
-  for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
-    const next: SimNode[] = [];
-    for (const from of frontier) {
-      for (const { node: nb, relType, outgoing } of graph.neighbors(from.id)) {
-        if (visited.has(nb.id)) continue;
-        visited.add(nb.id);
-        cameFrom.set(nb.id, { from, to: nb, relType, fromIsSource: outgoing });
-        if (nb.id === endId) {
-          const path: PathStep[] = [];
-          for (let id = endId; id !== start.id; ) {
-            const step = cameFrom.get(id)!;
-            path.unshift(step);
-            id = step.from.id;
-          }
-          return path;
-        }
-        next.push(nb);
+/** A path's strength, 0..1: e^(−length), i.e. its weights multiplied × 0.9 per hop after the first. */
+export function pathStrength(path: PathStep[]): number {
+  return Math.exp(-pathLength(path));
+}
+
+/** A min-heap of (length, node id). */
+class MinHeap {
+  private items: Array<[number, string]> = [];
+  get size(): number {
+    return this.items.length;
+  }
+  push(item: [number, string]): void {
+    const a = this.items;
+    a.push(item);
+    for (let i = a.length - 1; i > 0; ) {
+      const parent = (i - 1) >> 1;
+      if (a[parent]![0] <= a[i]![0]) break;
+      [a[parent], a[i]] = [a[i]!, a[parent]!];
+      i = parent;
+    }
+  }
+  pop(): [number, string] | undefined {
+    const a = this.items;
+    const top = a[0];
+    const last = a.pop();
+    if (a.length > 0 && last) {
+      a[0] = last;
+      for (let i = 0; ; ) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && a[l]![0] < a[m]![0]) m = l;
+        if (r < a.length && a[r]![0] < a[m]![0]) m = r;
+        if (m === i) break;
+        [a[m], a[i]] = [a[i]!, a[m]!];
+        i = m;
       }
     }
-    frontier = next;
+    return top;
   }
-  return null;
+}
+
+/**
+ * The shortest (strongest) path from `start` to each node in `targetIds`
+ * (Dijkstra over REL_DISTANCES + hub damping + HOP_DISTANCE), each read from `start`
+ * outwards. A target with no path within MAX_HOPS / MIN_STRENGTH is missing
+ * from the result. Stops as soon as every target is settled.
+ *
+ * The hop limit makes this approximate in one corner: a node first reached by a
+ * short path at the hop limit isn't expanded further, even if a longer path
+ * with fewer hops could have continued.
+ */
+export function strongestPaths(
+  graph: GraphAccess,
+  start: SimNode,
+  targetIds: Set<string>
+): Map<string, PathStep[]> {
+  const found = new Map<string, PathStep[]>();
+  if (targetIds.has(start.id)) found.set(start.id, []);
+  const remaining = new Set([...targetIds].filter((id) => id !== start.id));
+  if (remaining.size === 0) return found;
+
+  // Lengths here add HOP_DISTANCE on every hop, the first too: the same ordering,
+  // and pathLength leaves the first one out.
+  const dist = new Map<string, number>([[start.id, 0]]);
+  const hops = new Map<string, number>([[start.id, 0]]);
+  const cameFrom = new Map<string, PathStep>();
+  const nodes = new Map<string, SimNode>([[start.id, start]]);
+  const settled = new Set<string>();
+  const heap = new MinHeap();
+  heap.push([0, start.id]);
+
+  const pathTo = (id: string): PathStep[] => {
+    const path: PathStep[] = [];
+    for (let cur = id; cur !== start.id; ) {
+      const step = cameFrom.get(cur)!;
+      path.unshift(step);
+      cur = step.from.id;
+    }
+    return path;
+  };
+
+  let expanded = 0;
+  while (heap.size > 0 && remaining.size > 0) {
+    const [d, id] = heap.pop()!;
+    if (settled.has(id) || d > (dist.get(id) ?? Infinity)) continue;
+    settled.add(id);
+    if (remaining.delete(id)) found.set(id, pathTo(id));
+    if (remaining.size === 0) break;
+    if (hops.get(id)! >= MAX_HOPS || ++expanded > MAX_EXPANDED) continue;
+
+    const from = nodes.get(id)!;
+    for (const { node, relType, outgoing } of graph.neighbors(id)) {
+      if (settled.has(node.id)) continue;
+      const atFrom = hubLength(graph, from, relType);
+      const atTo = hubLength(graph, node, relType);
+      const edge = relDistance(relType) + atFrom.length + atTo.length;
+      const nd = d + edge + HOP_DISTANCE;
+      if (nd - HOP_DISTANCE > MAX_LENGTH || nd >= (dist.get(node.id) ?? Infinity)) continue;
+      dist.set(node.id, nd);
+      hops.set(node.id, hops.get(id)! + 1);
+      nodes.set(node.id, node);
+      const hubs = [
+        ...(atFrom.count ? [{ node: from, count: atFrom.count }] : []),
+        ...(atTo.count ? [{ node, count: atTo.count }] : []),
+      ];
+      cameFrom.set(node.id, {
+        from,
+        to: node,
+        relType,
+        weight: Math.exp(-edge),
+        baseWeight: relWeight(relType),
+        ...(hubs.length ? { hubs } : {}),
+        fromIsSource: outgoing,
+      });
+      heap.push([nd, node.id]);
+    }
+  }
+  return found;
 }
 
 /** The same path walked the other way. */
 export function reversePath(path: PathStep[]): PathStep[] {
   return path
     .map((s) => ({
+      ...s,
       from: s.to,
       to: s.from,
-      relType: s.relType,
       fromIsSource: s.fromIsSource === undefined ? undefined : !s.fromIsSource,
     }))
     .reverse();
 }
 
-/**
- * Split a node's neighbors into:
- *  - direct: person/group neighbors keyed by id -> best (relType, weight)
- *  - albums: album neighbors keyed by id -> the credit relType linking to them
- */
-interface Split {
-  direct: Map<string, { name: string; relType: string; weight: number }>;
-  albums: Map<string, { name: string; relType: string }>;
-}
-
-function splitNeighbors(graph: GraphAccess, nodeId: string): Split {
-  const direct = new Map<string, { name: string; relType: string; weight: number }>();
-  const albums = new Map<string, { name: string; relType: string }>();
-
-  for (const { node, relType } of graph.neighbors(nodeId)) {
-    if (node.type === "album") {
-      // Keep one credit relType per album (first seen is fine for weighting).
-      if (!albums.has(node.id)) albums.set(node.id, { name: node.name, relType });
-    } else {
-      const w = relWeight(relType);
-      const existing = direct.get(node.id);
-      if (!existing || w > existing.weight) {
-        direct.set(node.id, { name: node.name, relType, weight: w });
-      }
-    }
-  }
-  return { direct, albums };
-}
-
 // --- Scoring ----------------------------------------------------------------
 
-/** Hops that still count as fully close: a direct tie, or one artist in between. */
-export const FULL_CLOSENESS_HOPS = 2;
-
 /**
- * Convert a graph distance into a 0..1 proximity factor.
- * distance 0-2 -> 1.0, 3 -> 0.6, 4 -> 0.36 ... (0.6 per hop past 2); null -> 0.
- */
-export function distanceFactor(distance: number | null): number {
-  if (distance === null) return 0;
-  if (distance <= FULL_CLOSENESS_HOPS) return 1;
-  return Math.pow(0.6, distance - FULL_CLOSENESS_HOPS);
-}
-
-/**
- * Gather the weighted connections between the target and one list artist:
- *  - direct edge between them (weighted by rel type)
- *  - shared direct neighbors (bandmates / collaborators)
- *  - shared albums (weighted by the number of shared album credits)
- */
-export function collectConnections(
-  targetSplit: Split,
-  artistId: string,
-  artistSplit: Split,
-  targetHasArtistDirect: { relType: string; weight: number } | undefined
-): Connection[] {
-  const connections: Connection[] = [];
-
-  // 1. Direct edge target <-> artist.
-  if (targetHasArtistDirect) {
-    connections.push({
-      kind: "direct",
-      relType: targetHasArtistDirect.relType,
-      via: "direct connection",
-      weight: targetHasArtistDirect.weight,
-    });
-  }
-
-  // 2. Shared direct neighbors (common bandmates / collaborators).
-  for (const [id, info] of artistSplit.direct) {
-    if (id === artistId) continue;
-    const shared = targetSplit.direct.get(id);
-    if (shared) {
-      // Weight the shared tie by the weaker of the two edges (both must hold).
-      const weight = Math.min(shared.weight, info.weight);
-      connections.push({
-        kind: "shared",
-        // Label it by the weaker tie, the one that sets the weight.
-        relType: shared.weight <= info.weight ? shared.relType : info.relType,
-        via: info.name,
-        weight,
-      });
-    }
-  }
-
-  // 3. Shared albums -> collaboration weighted by shared credit count.
-  let sharedCredits = 0;
-  const sharedAlbumNames: string[] = [];
-  for (const [id, info] of artistSplit.albums) {
-    if (targetSplit.albums.has(id)) {
-      sharedCredits++;
-      if (sharedAlbumNames.length < 5) sharedAlbumNames.push(info.name);
-    }
-  }
-  if (sharedCredits > 0) {
-    connections.push({
-      kind: "album",
-      relType: "album_credit",
-      via:
-        sharedCredits === 1
-          ? sharedAlbumNames[0]!
-          : `${sharedCredits} shared albums (${sharedAlbumNames.join(", ")})`,
-      weight: albumCreditWeight(sharedCredits),
-    });
-  }
-
-  // Strongest first.
-  return connections.sort((a, b) => b.weight - a.weight);
-}
-
-/**
- * Score a single (target, listArtist) pair, 0..100.
- *
- * Blends:
- *  - connection strength (best weighted connection + diminishing extra ones)
- *  - graph proximity (BFS distance over all relationships)
- */
-export function scorePair(
-  graph: GraphAccess,
-  target: SimNode,
-  targetSplit: Split,
-  listArtist: ArtistRef
-): PairScore {
-  const node = resolveArtist(graph, listArtist);
-  if (!node) {
-    return { name: refName(listArtist), found: false, distance: null, connections: [], score: 0, path: null };
-  }
-
-  if (node.id === target.id) {
-    return {
-      name: node.name,
-      found: true,
-      distance: 0,
-      node,
-      path: [],
-      connections: [{ kind: "direct", relType: "member_of", via: "same artist", weight: 1 }],
-      strength: 1,
-      proximity: 1,
-      score: 100,
-    };
-  }
-
-  const artistSplit = splitNeighbors(graph, node.id);
-  const targetDirectToArtist = targetSplit.direct.get(node.id);
-
-  const connections = collectConnections(
-    targetSplit,
-    node.id,
-    artistSplit,
-    targetDirectToArtist
-  );
-
-  const pathFromTarget = findPath(graph, target, node.id);
-  const distance = pathFromTarget ? pathFromTarget.length : null;
-
-  // Connection strength: strongest connection dominates, additional independent
-  // connections add with diminishing returns (multiple paths = stronger signal).
-  let connectionStrength = 0;
-  if (connections.length > 0) {
-    connectionStrength = connections[0]!.weight;
-    let decay = 0.5;
-    for (let i = 1; i < connections.length; i++) {
-      connectionStrength += connections[i]!.weight * decay;
-      decay *= 0.5;
-    }
-    connectionStrength = Math.min(1, connectionStrength);
-  }
-
-  const proximity = distanceFactor(distance);
-
-  // Connection strength (rel-type weighted) is the primary signal (70%),
-  // graph proximity fills in the rest (30%).
-  const score = Math.round((0.7 * connectionStrength + 0.3 * proximity) * 100);
-
-  return {
-    name: node.name,
-    found: true,
-    distance,
-    node,
-    // Read from the list artist to the target ("how does the artist I like lead to this one").
-    path: pathFromTarget ? reversePath(pathFromTarget) : null,
-    connections: connections.slice(0, 5),
-    strength: connectionStrength,
-    proximity,
-    score,
-  };
-}
-
-/**
- * Compute the similarity of `targetName` to `listArtists` using the full graph.
+ * Compute the similarity of the target artist to each listed artist using the
+ * full graph: one strongest-path search from the target to all of them.
  */
 export function computeSimilarity(
   graph: GraphAccess,
@@ -445,29 +362,40 @@ export function computeSimilarity(
       targetName: refName(targetArtist),
       targetFound: false,
       overallScore: 0,
-      pairs: listArtists.map((a) => ({
-        name: refName(a),
-        found: false,
-        distance: null,
-        connections: [],
-        score: 0,
-      })),
+      pairs: listArtists.map((a) => ({ name: refName(a), found: false, distance: null, score: 0, path: null })),
     };
   }
 
-  const targetSplit = splitNeighbors(graph, target.id);
+  const nodes = listArtists.map((a) => resolveArtist(graph, a));
+  const paths = strongestPaths(graph, target, new Set(nodes.filter((n): n is SimNode => n !== null).map((n) => n.id)));
 
-  const pairs = listArtists.map((a) => scorePair(graph, target, targetSplit, a));
+  const pairs: PairScore[] = listArtists.map((a, i) => {
+    const node = nodes[i];
+    if (!node) return { name: refName(a), found: false, distance: null, score: 0, path: null };
+    const fromTarget = paths.get(node.id);
+    if (!fromTarget) return { name: node.name, found: true, node, distance: null, path: null, strength: 0, score: 0 };
+    const strength = pathStrength(fromTarget);
+    return {
+      name: node.name,
+      found: true,
+      node,
+      distance: fromTarget.length,
+      // Read from the list artist to the target ("how does the artist I like lead to this one").
+      path: reversePath(fromTarget),
+      strength,
+      score: Math.round(strength * 100),
+    };
+  });
+
   const overallScore = aggregateScore(pairs);
   const sortedPairs = [...pairs].sort((a, b) => b.score - a.score);
-
   return { targetName: target.name, target, targetFound: true, overallScore, pairs: sortedPairs };
 }
 
 /**
- * Score a single artist (by name) against a list of artists, returning just the
- * overall 0..100 similarity. Convenience wrapper around `computeSimilarity` for
- * ranking external candidates (e.g. concert headliners) against a taste profile.
+ * Score a single artist against a list of artists, returning just the overall
+ * 0..100 similarity. Convenience wrapper around `computeSimilarity` for ranking
+ * external candidates (e.g. concert headliners) against a taste profile.
  *
  * An artist not present in the graph scores 0 (see `SimilarityResult.targetFound`).
  */

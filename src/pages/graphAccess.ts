@@ -11,8 +11,8 @@
  * Lookups switch to the local graph as soon as it's ready.
  */
 
-import type { GraphAccess, SimNode, SimNeighbor } from "./similarity";
-import { findNodeById, findNodeByName, getNeighbors } from "../db/graphDb";
+import { HUB_DAMPED_TYPES, type GraphAccess, type SimNode, type SimNeighbor } from "./similarity";
+import { findNodeById, findNodeByName, getNeighbors, getRelDegree } from "../db/graphDb";
 
 export function buildGraphAccess(): GraphAccess {
   return {
@@ -23,6 +23,9 @@ export function buildGraphAccess(): GraphAccess {
     findNodeById(id: string): SimNode | null {
       const node = findNodeById(id);
       return node ? { id: node.id, name: node.name, type: node.type } : null;
+    },
+    degree(nodeId: string, relType: string): number | undefined {
+      return getRelDegree(nodeId, relType, HUB_DAMPED_TYPES) ?? undefined;
     },
     neighbors(nodeId: string): SimNeighbor[] {
       return getNeighbors(nodeId).map(({ node, relType, outgoing }) => ({

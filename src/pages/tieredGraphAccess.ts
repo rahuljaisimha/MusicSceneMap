@@ -179,6 +179,16 @@ export class TieredGraphAccess {
         if (core) return core;
         return this.overlayById.get(id)?.node ?? null;
       },
+      degree: (nodeId: string, relType: string): number | undefined => {
+        // The core graph counts every artist it has (an artist reached over a
+        // relType link has at least 1); for one fetched from Postgres/MusicBrainz,
+        // count the links that came with it.
+        const core = this.core.degree?.(nodeId, relType);
+        if (core) return core;
+        const sg = this.overlayById.get(nodeId);
+        if (!sg || sg.neighbors.length === 0) return undefined;
+        return sg.neighbors.filter((n) => n.relType === relType).length;
+      },
       neighbors: (nodeId: string): SimNeighbor[] => {
         const core = this.core.neighbors(nodeId);
         if (core.length > 0) return core;

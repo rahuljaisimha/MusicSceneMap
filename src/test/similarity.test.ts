@@ -2,13 +2,19 @@ import { describe, it, expect } from "vitest";
 import {
   computeSimilarity,
   aggregateScore,
-  distanceFactor,
-  findPath,
+  strongestPaths,
+  pathStrength,
+  pathLength,
+  HOP_DISTANCE,
+  HUB_DAMPED,
   reversePath,
   relWeight,
-  albumCreditWeight,
   REL_WEIGHTS,
   DEFAULT_REL_WEIGHT,
+  REL_DISTANCES,
+  relDistance,
+  HOP_DAMPING,
+  MAX_HOPS,
   type GraphAccess,
   type SimNode,
   type SimNeighbor,
@@ -77,18 +83,11 @@ describe("relWeight", () => {
   it("falls back to the default weight for unknown types", () => {
     expect(relWeight("totally_unknown")).toBe(DEFAULT_REL_WEIGHT);
   });
-});
 
-describe("albumCreditWeight", () => {
-  it("is zero with no shared credits and increases with count", () => {
-    expect(albumCreditWeight(0)).toBe(0);
-    expect(albumCreditWeight(2)).toBeGreaterThan(albumCreditWeight(1));
-    expect(albumCreditWeight(5)).toBeGreaterThan(albumCreditWeight(2));
-  });
-
-  it("saturates below the max", () => {
-    expect(albumCreditWeight(1000)).toBeLessThan(0.71);
-    expect(albumCreditWeight(1000)).toBeGreaterThan(0.65);
+  it("stores each weight as an edge length, -ln(weight)", () => {
+    expect(REL_DISTANCES.member_of).toBe(0);
+    expect(REL_DISTANCES.produced_for).toBeCloseTo(-Math.log(0.5));
+    expect(relDistance("totally_unknown")).toBeCloseTo(-Math.log(DEFAULT_REL_WEIGHT));
   });
 });
 
@@ -106,44 +105,34 @@ describe("computeSimilarity", () => {
     expect(res.pairs[0]!.score).toBe(100);
   });
 
-  it("finds a shared bandmate connection (Fuzz) between Charles and Ty", () => {
-    const g = makeGraph();
-    const res = computeSimilarity(g, "Charles Moothart", ["Ty Segall"]);
-    const tyPair = res.pairs.find((p) => p.name === "Ty Segall")!;
-    expect(tyPair.found).toBe(true);
-    // They share Fuzz (a group) and Album A (album credit).
-    const via = tyPair.connections.map((c) => c.via);
-    expect(via).toContain("Fuzz");
-    expect(tyPair.connections.some((c) => c.kind === "album")).toBe(true);
-    expect(res.overallScore).toBeGreaterThan(40);
+  it("scores bandmates through their band: 100 x 1.0 x 1.0 x 0.9", () => {
+    const res = computeSimilarity(makeGraph(), "Charles Moothart", ["Ty Segall"]);
+    const ty = res.pairs[0]!;
+    expect(ty.score).toBe(90);
+    expect(ty.path!.map((s) => s.to.name)).toEqual(["Fuzz", "Charles Moothart"]);
   });
 
-  it("uses album credits as a connection even without band ties (Mikal)", () => {
-    const g = makeGraph();
-    // Mikal only connects to Ty via Album A (both have credits on it).
-    const res = computeSimilarity(g, "Mikal Cronin", ["Ty Segall"]);
-    const tyPair = res.pairs.find((p) => p.name === "Ty Segall")!;
-    expect(tyPair.found).toBe(true);
-    expect(tyPair.connections.some((c) => c.kind === "album")).toBe(true);
-    expect(tyPair.score).toBeGreaterThan(0);
+  it("follows album credits too, but they're weak (Mikal only shares Album A with Ty)", () => {
+    const ty = computeSimilarity(makeGraph(), "Mikal Cronin", ["Ty Segall"]).pairs[0]!;
+    // instrument 0.35 x producer 0.4 x 0.9
+    expect(ty.strength).toBeCloseTo(0.35 * 0.4 * HOP_DAMPING);
+    expect(ty.score).toBe(13);
   });
 
   it("scores an unconnected artist (Osees) at zero", () => {
-    const g = makeGraph();
-    const res = computeSimilarity(g, "Osees", ["Ty Segall", "Charles Moothart"]);
+    const res = computeSimilarity(makeGraph(), "Osees", ["Ty Segall", "Charles Moothart"]);
     expect(res.overallScore).toBe(0);
     for (const p of res.pairs) {
       expect(p.distance).toBe(null);
-      expect(p.connections.length).toBe(0);
+      expect(p.path).toBe(null);
     }
   });
 
   it("ranks a band-tied target above an album-only-tied one", () => {
-    const g = makeGraph();
     const list = ["Ty Segall"];
-    const charles = computeSimilarity(g, "Charles Moothart", list); // shares Fuzz (member) + album
-    const mikal = computeSimilarity(g, "Mikal Cronin", list); // shares album only
-    expect(charles.overallScore).toBeGreaterThan(mikal.overallScore);
+    expect(computeSimilarity(makeGraph(), "Charles Moothart", list).overallScore).toBeGreaterThan(
+      computeSimilarity(makeGraph(), "Mikal Cronin", list).overallScore
+    );
   });
 
   it("marks list artists that aren't in the graph as not found", () => {
@@ -167,7 +156,6 @@ describe("aggregateScore", () => {
     name,
     found,
     distance: found ? 1 : null,
-    connections: [],
     score,
   });
 
@@ -238,35 +226,32 @@ function makeConcertGraph(): GraphAccess {
 }
 
 describe("opened_for (concert ties)", () => {
-  it("weighs below band membership and above a single album credit", () => {
-    expect(relWeight("opened_for")).toBeLessThan(relWeight("support_musician"));
-    expect(relWeight("opened_for")).toBeGreaterThan(relWeight("producer"));
+  it("weighs below band membership and above producing", () => {
+    expect(relWeight("opened_for")).toBeLessThan(relWeight("former_member_of"));
+    expect(relWeight("opened_for")).toBeGreaterThan(relWeight("produced_for"));
   });
 
   it("connects an opener to the headliner it opened for", () => {
-    const res = computeSimilarity(makeConcertGraph(), "Iguana Death Cult", ["Flat Worms"]);
-    const pair = res.pairs[0]!;
-    expect(pair.connections[0]).toMatchObject({ kind: "direct", relType: "opened_for" });
-    expect(pair.score).toBeGreaterThan(0);
+    const pair = computeSimilarity(makeConcertGraph(), "Iguana Death Cult", ["Flat Worms"]).pairs[0]!;
+    expect(pair.path!.map((s) => s.relType)).toEqual(["opened_for"]);
+    expect(pair.score).toBe(80);
   });
 
-  it("connects two openers of the same headliner, labelled by that tie", () => {
-    const res = computeSimilarity(makeConcertGraph(), "Earth Tongue", ["Flat Worms"]);
-    const shared = res.pairs[0]!.connections.find((c) => c.kind === "shared")!;
-    expect(shared).toMatchObject({ via: "Osees", relType: "opened_for", weight: REL_WEIGHTS.opened_for });
+  it("connects two openers of the same headliner, two weak hops", () => {
+    const pair = computeSimilarity(makeConcertGraph(), "Earth Tongue", ["Flat Worms"]).pairs[0]!;
+    expect(pair.path!.map((s) => s.to.name)).toEqual(["Osees", "Earth Tongue"]);
+    expect(pair.strength).toBeCloseTo(0.8 * 0.8 * HOP_DAMPING);
   });
 
-  it("labels a shared tie by the weaker of the two edges", () => {
-    // John Dwyer is in Osees; Flat Worms opened for them: the tie is only as strong as opened_for.
-    const res = computeSimilarity(makeConcertGraph(), "John Dwyer", ["Flat Worms"]);
-    const shared = res.pairs[0]!.connections.find((c) => c.kind === "shared")!;
-    expect(shared).toMatchObject({ via: "Osees", relType: "opened_for", weight: REL_WEIGHTS.opened_for });
+  it("is only as strong as every hop together: member x opened_for", () => {
+    const pair = computeSimilarity(makeConcertGraph(), "John Dwyer", ["Flat Worms"]).pairs[0]!;
+    expect(pair.strength).toBeCloseTo(1.0 * 0.8 * HOP_DAMPING);
   });
 });
 
 describe("collaborations (credits on another artist's records)", () => {
-  it("weigh below band ties and at least as much as a single album credit", () => {
-    expect(relWeight("collaborated_with")).toBeLessThan(relWeight("support_musician"));
+  it("weigh below membership; producing weighs least", () => {
+    expect(relWeight("collaborated_with")).toBeLessThan(relWeight("former_member_of"));
     expect(relWeight("produced_for")).toBeLessThan(relWeight("collaborated_with"));
     expect(relWeight("produced_for")).toBeGreaterThan(relWeight("producer"));
   });
@@ -290,9 +275,11 @@ describe("the path behind a pair (shown in its bottom sheet)", () => {
     expect(steps[steps.length - 1]).toEqual(["Ty Segall", "member_of", "GOGGS", true]);
   });
 
-  it("keeps the score's two parts", () => {
-    const pair = computeSimilarity(makeGraph(), "Charles Moothart", ["Ty Segall"]).pairs[0]!;
-    expect(pair.score).toBe(Math.round((0.7 * pair.strength! + 0.3 * pair.proximity!) * 100));
+  it("scores 100 x the path's strength", () => {
+    const pair = computeSimilarity(makeGraph(), "GOGGS", ["Charles Moothart"]).pairs[0]!;
+    expect(pair.strength).toBeCloseTo(pathStrength(pair.path!));
+    expect(pair.score).toBe(Math.round(pair.strength! * 100));
+    expect(pair.score).toBe(81); // member x3, two extra hops: 0.9^2
   });
 
   it("is empty for the same artist and null when unreachable", () => {
@@ -303,7 +290,7 @@ describe("the path behind a pair (shown in its bottom sheet)", () => {
   it("reverses a path hop by hop, flipping each direction", () => {
     const g = makeGraph();
     const ty = g.findNodeByName("Ty Segall")!;
-    const path = findPath(g, ty, "cfm")!;
+    const path = strongestPaths(g, ty, new Set(["cfm"])).get("cfm")!;
     expect(path.map((s) => s.to.name)).toEqual(["Fuzz", "Charles Moothart", "CFM"]);
     const back = reversePath(path);
     expect(back.map((s) => [s.from.name, s.to.name, s.fromIsSource])).toEqual([
@@ -364,12 +351,117 @@ describe("artists picked from the dropdown (by MusicBrainz ID)", () => {
   });
 });
 
-describe("distanceFactor (closeness)", () => {
-  it("counts 1 and 2 hops as fully close, then drops by 0.6 a hop", () => {
-    expect([0, 1, 2].map(distanceFactor)).toEqual([1, 1, 1]);
-    expect(distanceFactor(3)).toBeCloseTo(0.6);
-    expect(distanceFactor(4)).toBeCloseTo(0.36);
-    expect(distanceFactor(5)).toBeCloseTo(0.216);
-    expect(distanceFactor(null)).toBe(0);
+describe("strongest paths", () => {
+  /** A short weak route (A -produced_for- B) and a longer strong one (A -member- X -member- Y -member- B). */
+  function routes(): GraphAccess {
+    const n = (id: string): SimNode => ({ id, name: id.toUpperCase(), type: "group" });
+    const edges: Array<[string, string, string]> = [
+      ["a", "b", "produced_for"],
+      ["a", "x", "member_of"],
+      ["x", "y", "member_of"],
+      ["y", "b", "member_of"],
+    ];
+    return {
+      findNodeByName: (name) => (["a", "b", "x", "y"].includes(name.toLowerCase()) ? n(name.toLowerCase()) : null),
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t, rel] of edges) {
+          if (s === id) out.push({ node: n(t), relType: rel, outgoing: true });
+          if (t === id) out.push({ node: n(s), relType: rel, outgoing: false });
+        }
+        return out;
+      },
+    };
+  }
+
+  it("prefers a longer path of strong ties over a short weak one", () => {
+    const pair = computeSimilarity(routes(), "A", ["B"]).pairs[0]!;
+    expect(pair.distance).toBe(3);
+    expect(pair.score).toBe(81); // 1 x 1 x 1 x 0.9^2, beats produced_for's 50
+  });
+
+  it("damps every hop after the first by HOP_DAMPING", () => {
+    const blank = { id: "", name: "", type: "" };
+    const step = (relType: string) => ({ from: blank, to: blank, relType, weight: relWeight(relType) });
+    expect(pathStrength([])).toBe(1);
+    expect(pathStrength([step("produced_for")])).toBeCloseTo(0.5);
+    expect(pathStrength([step("member_of"), step("member_of"), step("produced_for")])).toBeCloseTo(0.5 * HOP_DAMPING ** 2);
+    expect(pathLength([step("member_of"), step("produced_for")])).toBeCloseTo(-Math.log(0.5) + HOP_DISTANCE);
+  });
+
+  it("doesn't follow paths past MAX_HOPS", () => {
+    const chain = Array.from({ length: MAX_HOPS + 2 }, (_, i) => `n${i}`);
+    const node = (id: string): SimNode => ({ id, name: id, type: "group" });
+    const g: GraphAccess = {
+      findNodeByName: (name) => (chain.includes(name) ? node(name) : null),
+      neighbors(id) {
+        const i = chain.indexOf(id);
+        return [chain[i - 1], chain[i + 1]].filter((x): x is string => !!x).map((x) => ({ node: node(x), relType: "member_of" }));
+      },
+    };
+    const res = computeSimilarity(g, "n0", [chain[MAX_HOPS]!, chain[MAX_HOPS + 1]!]);
+    expect(res.pairs.find((p) => p.name === chain[MAX_HOPS])!.distance).toBe(MAX_HOPS);
+    expect(res.pairs.find((p) => p.name === chain[MAX_HOPS + 1])!.path).toBeNull();
+  });
+
+  it("carries each hop's weight", () => {
+    const path = computeSimilarity(makeConcertGraph(), "John Dwyer", ["Flat Worms"]).pairs[0]!.path!;
+    expect(path.map((s) => s.weight)).toEqual([REL_WEIGHTS.opened_for, REL_WEIGHTS.member_of]);
+    expect(reversePath(reversePath(path))).toEqual(path);
+  });
+
+});
+
+describe("hub damping", () => {
+  /**
+   * Fan played on a Star's records and on an Indie band's. Star has 140 collaborators
+   * (10x the typical 14); Indie has 3. Opener opened for Star (never damped).
+   */
+  function hubGraph(withDegree = true): GraphAccess {
+    const n = (id: string): SimNode => ({ id, name: id, type: "group" });
+    const edges: Array<[string, string, string]> = [
+      ["Fan", "Star", "collaborated_with"],
+      ["Fan", "Indie", "collaborated_with"],
+      ["Opener", "Star", "opened_for"],
+      ["Member", "Star", "member_of"],
+    ];
+    const degrees: Record<string, number> = { "Star|collaborated_with": 140, "Fan|collaborated_with": 2, "Indie|collaborated_with": 3 };
+    return {
+      findNodeByName: (name) => n(name),
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t, rel] of edges) {
+          if (s === id) out.push({ node: n(t), relType: rel, outgoing: true });
+          if (t === id) out.push({ node: n(s), relType: rel, outgoing: false });
+        }
+        return out;
+      },
+      ...(withDegree ? { degree: (id: string, rel: string) => degrees[`${id}|${rel}`] ?? 1 } : {}),
+    };
+  }
+
+  it("weakens a collaboration with an artist who has many collaborators", () => {
+    const g = hubGraph();
+    const star = computeSimilarity(g, "Fan", ["Star"]).pairs[0]!;
+    const indie = computeSimilarity(g, "Fan", ["Indie"]).pairs[0]!;
+    expect(indie.score).toBe(80);
+    expect(star.score).toBe(8); // 0.8 x 14/140
+    const step = star.path![0]!;
+    expect(step).toMatchObject({ baseWeight: 0.8, hubs: [{ node: { id: "Star" }, count: 140 }] });
+    expect(step.weight).toBeCloseTo(0.08);
+    expect(pathStrength(star.path!)).toBeCloseTo(0.08);
+  });
+
+  it("never damps memberships or opened_for", () => {
+    expect(Object.keys(HUB_DAMPED)).not.toContain("member_of");
+    expect(Object.keys(HUB_DAMPED)).not.toContain("former_member_of");
+    expect(Object.keys(HUB_DAMPED)).not.toContain("opened_for");
+    const g = hubGraph();
+    expect(computeSimilarity(g, "Opener", ["Star"]).pairs[0]!.score).toBe(80);
+    expect(computeSimilarity(g, "Member", ["Star"]).pairs[0]!.score).toBe(100);
+  });
+
+  it("doesn't damp when the graph can't count links", () => {
+    expect(computeSimilarity(hubGraph(false), "Fan", ["Star"]).pairs[0]!.score).toBe(80);
   });
 });

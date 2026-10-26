@@ -8,17 +8,17 @@
  *
  * The graph is treated as a weighted graph: each relationship has a weight
  * (REL_WEIGHTS, 0..1; a band membership is 1.0, producing someone's records
- * 0.5), stored as an edge length −ln(weight) (REL_DISTANCES), so strong ties are
- * short. Every hop after the first also adds HOP_DISTANCE (−ln 0.9), so a chain
- * of members doesn't stay at 100 forever. Two artists are as close as the
- * shortest path between them:
+ * 0.3), stored as an edge length −ln(weight) (REL_DISTANCES), so strong ties are
+ * short. The first FREE_HOPS (2) hops are free; every hop after that also adds
+ * HOP_DISTANCE (−ln 0.9), so a chain of members doesn't stay at 100 forever.
+ * Two artists are as close as the shortest path between them:
  *
  *   pair score = 100 × e^(−path length)
- *              = 100 × (weights along the path, multiplied) × 0.9^(hops − 1)
+ *              = 100 × (weights along the path, multiplied) × 0.9^(hops − 2, if more than 2)
  *
- * Examples: Ty Segall — member — Fuzz = 100; Charles Moothart — member — Fuzz —
- * member — Ty Segall = 90; Tim Hellman — member — Osees ← opened for — Iguana
- * Death Cult = 1.0 × 0.8 × 0.9 = 72.
+ * Examples: Ty Segall — member — Fuzz = 100; bandmates Mikal Cronin — member —
+ * Ty Segall Band — member — Ty Segall = 100; Fuzz — Ty Segall — opened for
+ * Osees (3 shows) ← opened for — Iguana Death Cult = 1.0 × 0.9 × 0.8 × 0.9 = 65.
  *
  * One search (Dijkstra from the compared artist) finds the strongest path to
  * every liked artist. The weights are placeholders, intended to be tuned.
@@ -230,7 +230,9 @@ export interface SimilarityResult {
 
 // --- Strongest paths --------------------------------------------------------
 
-/** Each hop past the first multiplies a path's strength by this... */
+/** Hops that cost nothing beyond their weights: a direct tie, or one artist in between (bandmates). */
+export const FREE_HOPS = 2;
+/** Each hop past FREE_HOPS multiplies a path's strength by this... */
 export const HOP_DAMPING = 0.9;
 /** ...that is, adds this much length. */
 export const HOP_DISTANCE = Math.log(1 / HOP_DAMPING);
@@ -242,12 +244,12 @@ const MAX_LENGTH = Math.log(1 / MIN_STRENGTH);
 /** At most this many artists are expanded per search, to bound the time a search can take. */
 export const MAX_EXPANDED = 10000;
 
-/** A path's length: each hop's −ln(weight) plus HOP_DISTANCE per hop after the first. 0 for []. */
+/** A path's length: each hop's −ln(weight) plus HOP_DISTANCE per hop after FREE_HOPS. 0 for []. */
 export function pathLength(path: PathStep[]): number {
-  return path.reduce((d, step, i) => d + Math.log(1 / step.weight) + (i > 0 ? HOP_DISTANCE : 0), 0);
+  return path.reduce((d, step, i) => d + Math.log(1 / step.weight) + (i >= FREE_HOPS ? HOP_DISTANCE : 0), 0);
 }
 
-/** A path's strength, 0..1: e^(−length), i.e. its weights multiplied × 0.9 per hop after the first. */
+/** A path's strength, 0..1: e^(−length), i.e. its weights multiplied × 0.9 per hop after FREE_HOPS. */
 export function pathStrength(path: PathStep[]): number {
   return Math.exp(-pathLength(path));
 }
@@ -295,9 +297,11 @@ class MinHeap {
  * outwards. A target with no path within MAX_HOPS / MIN_STRENGTH is missing
  * from the result. Stops as soon as every target is settled.
  *
- * The hop limit makes this approximate in one corner: a node first reached by a
- * short path at the hop limit isn't expanded further, even if a longer path
- * with fewer hops could have continued.
+ * Approximate in two corners, both from costs that depend on hop count: a node
+ * first reached by a short path at the hop limit isn't expanded further, even if
+ * a longer path with fewer hops could have continued; and a node reached first
+ * by a path with more hops carries more of the hop damping onward than a
+ * slightly longer path with fewer hops would.
  */
 export function strongestPaths(
   graph: GraphAccess,
@@ -309,8 +313,6 @@ export function strongestPaths(
   const remaining = new Set([...targetIds].filter((id) => id !== start.id));
   if (remaining.size === 0) return found;
 
-  // Lengths here add HOP_DISTANCE on every hop, the first too: the same ordering,
-  // and pathLength leaves the first one out.
   const dist = new Map<string, number>([[start.id, 0]]);
   const hops = new Map<string, number>([[start.id, 0]]);
   const cameFrom = new Map<string, PathStep>();
@@ -346,8 +348,8 @@ export function strongestPaths(
       const repeated = count !== undefined && count > 1 && relType in REPEATS;
       const base = repeated ? repeatWeight(relType, count) : relWeight(relType);
       const edge = (repeated ? Math.log(1 / base) : relDistance(relType)) + atFrom.length + atTo.length;
-      const nd = d + edge + HOP_DISTANCE;
-      if (nd - HOP_DISTANCE > MAX_LENGTH || nd >= (dist.get(node.id) ?? Infinity)) continue;
+      const nd = d + edge + (hops.get(id)! + 1 > FREE_HOPS ? HOP_DISTANCE : 0);
+      if (nd > MAX_LENGTH || nd >= (dist.get(node.id) ?? Infinity)) continue;
       dist.set(node.id, nd);
       hops.set(node.id, hops.get(id)! + 1);
       nodes.set(node.id, node);

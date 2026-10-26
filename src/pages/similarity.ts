@@ -480,20 +480,31 @@ export function scoreArtistAgainstList(
   return { score: result.overallScore, found: result.targetFound, result };
 }
 
+/** Other liked artists add a bonus only when they match at least this well. */
+export const BONUS_THRESHOLD = 60;
+/** Share of the 2nd-best match's score added as a bonus; each further match adds half the previous share. */
+export const BONUS_SHARE = 0.25;
+
 /**
  * Aggregate per-pair scores into an overall 0..100 similarity.
  *
- * 60% best connection, 40% average across the list — a single very strong
- * connection meaningfully lifts the score (multiple independent paths =
- * stronger recommendation) while broad-but-weak links still count.
+ * The best match counts in full. Every other liked artist that also matches
+ * well (>= BONUS_THRESHOLD, 60) adds a bonus: the 2nd adds 25% of its score, the
+ * 3rd 12.5%, the 4th 6.25%... (the same diminishing returns as the connections
+ * within a pair), capped at 100. So fitting several of your artists lifts the
+ * score, and weak matches never pull it down: adding an artist to your list
+ * can't lower anything.
  */
 export function aggregateScore(pairs: PairScore[]): number {
-  const scored = pairs.filter((p) => p.found);
-  if (scored.length === 0) return 0;
+  const scores = pairs.filter((p) => p.found).map((p) => p.score).sort((a, b) => b - a);
+  if (scores.length === 0) return 0;
 
-  const scores = scored.map((p) => p.score);
-  const best = Math.max(...scores);
-  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
-
-  return Math.round(0.6 * best + 0.4 * avg);
+  let total = scores[0]!;
+  let share = BONUS_SHARE;
+  for (const s of scores.slice(1)) {
+    if (s < BONUS_THRESHOLD) break; // sorted: the rest are weaker
+    total += s * share;
+    share /= 2;
+  }
+  return Math.min(100, Math.round(total));
 }

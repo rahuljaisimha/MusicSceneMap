@@ -175,9 +175,28 @@ describe("aggregateScore", () => {
     expect(aggregateScore([mk("a", 0, false), mk("b", 0, false)])).toBe(0);
   });
 
-  it("weights the best connection above the plain average", () => {
-    // best=80, avg=50 -> 0.6*80 + 0.4*50 = 68
-    expect(aggregateScore([mk("a", 80), mk("b", 20)])).toBe(68);
+  it("is the best match when the others match weakly: they don't pull it down", () => {
+    // Iguana Death Cult: Tim Hellman 77, Fuzz 18 -> 77 (was 65 with best/average)
+    expect(aggregateScore([mk("a", 77), mk("b", 18)])).toBe(77);
+    expect(aggregateScore([mk("a", 80), mk("b", 59)])).toBe(80);
+  });
+
+  it("adds a diminishing bonus for each other good match", () => {
+    expect(aggregateScore([mk("a", 77), mk("b", 60)])).toBe(92); // 77 + 0.25*60
+    expect(aggregateScore([mk("a", 70), mk("b", 60), mk("c", 60)])).toBe(93); // 70 + 15 + 7.5
+    expect(aggregateScore([mk("c", 60), mk("a", 70), mk("b", 10), mk("d", 60)])).toBe(93); // order doesn't matter
+    expect(aggregateScore([mk("a", 50), mk("b", 40), mk("c", 40)])).toBe(50); // under 60: no bonus
+  });
+
+  it("caps at 100", () => {
+    expect(aggregateScore([mk("a", 95), mk("b", 90), mk("c", 90)])).toBe(100);
+  });
+
+  it("never drops when an artist is added to the list", () => {
+    const base = [mk("a", 70), mk("b", 65)];
+    for (const extra of [0, 20, 59, 60, 80]) {
+      expect(aggregateScore([...base, mk("x", extra)])).toBeGreaterThanOrEqual(aggregateScore(base));
+    }
   });
 
   it("ignores not-found pairs in the aggregate", () => {

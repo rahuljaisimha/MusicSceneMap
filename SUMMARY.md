@@ -122,7 +122,9 @@ Similarity mode (artist-to-scene fit scoring):
           produced_for / opened_for
         → Per-pair score = 70% connection strength + 30% BFS proximity (all rels):
           1 or 2 hops -> 1.0, then x0.6 per extra hop (3 -> 0.6, 4 -> 0.36, ...)
-        → Overall = 60% best pair + 40% average (rewards multiple independent paths)
+        → Overall = best pair + a diminishing bonus for every other pair scoring >= 60
+          (2nd adds 25% of its score, 3rd 12.5%, ...), capped at 100: more good matches
+          lift it, weak ones never lower it (BONUS_THRESHOLD / BONUS_SHARE)
         → Fully client-side; no backend. Weights are placeholders, tunable in similarity.ts
         → Tapping a breakdown card opens a panel for that pair, styled like Explore's node
           panel (.info-panel: sidebar on desktop, bottom sheet on phones): the pair's
@@ -375,7 +377,7 @@ Vitest tests in `src/test/musicbrainz.integration.test.ts` are regression guards
 
 The rate limiter in `mbFetch` is skipped when `process.env.VITEST` is set. To refresh a fixture, re-capture the MusicBrainz API response for the relevant MBID.
 
-`src/test/similarity.test.ts` unit-tests the Similarity scoring logic (`src/pages/similarity.ts`) against an in-memory fake graph (no sql.js needed). Covers: relationship-weight ordering (member_of > former_member_of > support_musician > album credits), album-credit weighting by shared-credit count with saturation, connection detection (shared bandmates and shared albums), band-tied vs album-only ranking, unreachable artists scoring zero, unknown/not-found artists, breakdown sort order, and the best/average aggregate.
+`src/test/similarity.test.ts` unit-tests the Similarity scoring logic (`src/pages/similarity.ts`) against an in-memory fake graph (no sql.js needed). Covers: relationship-weight ordering (member_of > former_member_of > support_musician > album credits), album-credit weighting by shared-credit count with saturation, connection detection (shared bandmates and shared albums), band-tied vs album-only ranking, unreachable artists scoring zero, unknown/not-found artists, breakdown sort order, and the overall score (best match plus a diminishing bonus for other good matches; never lowered by adding an artist).
 
 `src/test/artistSuggest.test.ts` covers the artist dropdown: source order (graph labels with no request; Postgres labels by MBID; Postgres while the graph downloads; MusicBrainz only when the database has no match or is down), MusicBrainz field mapping (type, and the disambiguation only), and the label (the disambiguation, or none).
 

@@ -120,7 +120,8 @@ Similarity mode (artist-to-scene fit scoring):
         → Each connection weighted by relationship type (REL_WEIGHTS):
           member_of > former_member_of > support_musician > collaborated_with >
           produced_for / opened_for
-        → Per-pair score = 70% connection strength + 30% BFS proximity (all rels)
+        → Per-pair score = 70% connection strength + 30% BFS proximity (all rels):
+          1 or 2 hops -> 1.0, then x0.6 per extra hop (3 -> 0.6, 4 -> 0.36, ...)
         → Overall = 60% best pair + 40% average (rewards multiple independent paths)
         → Fully client-side; no backend. Weights are placeholders, tunable in similarity.ts
         → Tapping a breakdown card opens a panel for that pair, styled like Explore's node

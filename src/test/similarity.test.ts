@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeSimilarity,
   aggregateScore,
+  distanceFactor,
   findPath,
   reversePath,
   relWeight,
@@ -341,5 +342,15 @@ describe("artists picked from the dropdown (by MusicBrainz ID)", () => {
   it("doesn't fall back to the name when the picked ID isn't in the graph", () => {
     const res = computeSimilarity(twoFuzzes(), "Ty Segall", [{ name: "Fuzz", id: "not-in-graph" }]);
     expect(res.pairs[0]).toMatchObject({ name: "Fuzz", found: false });
+  });
+});
+
+describe("distanceFactor (closeness)", () => {
+  it("counts 1 and 2 hops as fully close, then drops by 0.6 a hop", () => {
+    expect([0, 1, 2].map(distanceFactor)).toEqual([1, 1, 1]);
+    expect(distanceFactor(3)).toBeCloseTo(0.6);
+    expect(distanceFactor(4)).toBeCloseTo(0.36);
+    expect(distanceFactor(5)).toBeCloseTo(0.216);
+    expect(distanceFactor(null)).toBe(0);
   });
 });

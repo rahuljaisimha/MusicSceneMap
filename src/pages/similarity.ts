@@ -274,14 +274,17 @@ function splitNeighbors(graph: GraphAccess, nodeId: string): Split {
 
 // --- Scoring ----------------------------------------------------------------
 
+/** Hops that still count as fully close: a direct tie, or one artist in between. */
+export const FULL_CLOSENESS_HOPS = 2;
+
 /**
  * Convert a graph distance into a 0..1 proximity factor.
- * distance 1 -> 1.0, 2 -> 0.6, 3 -> 0.36 ... (0.6^(d-1)); 0 -> 1.0; null -> 0.
+ * distance 0-2 -> 1.0, 3 -> 0.6, 4 -> 0.36 ... (0.6 per hop past 2); null -> 0.
  */
 export function distanceFactor(distance: number | null): number {
   if (distance === null) return 0;
-  if (distance <= 1) return 1;
-  return Math.pow(0.6, distance - 1);
+  if (distance <= FULL_CLOSENESS_HOPS) return 1;
+  return Math.pow(0.6, distance - FULL_CLOSENESS_HOPS);
 }
 
 /**

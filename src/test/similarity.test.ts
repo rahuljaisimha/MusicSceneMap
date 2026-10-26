@@ -107,18 +107,18 @@ describe("computeSimilarity", () => {
     expect(res.pairs[0]!.score).toBe(100);
   });
 
-  it("scores bandmates through their band: 100 x 1.0 x 1.0 x 0.9", () => {
+  it("scores bandmates through their band at 100: two hops are free", () => {
     const res = computeSimilarity(makeGraph(), "Charles Moothart", ["Ty Segall"]);
     const ty = res.pairs[0]!;
-    expect(ty.score).toBe(90);
+    expect(ty.score).toBe(100);
     expect(ty.path!.map((s) => s.to.name)).toEqual(["Fuzz", "Charles Moothart"]);
   });
 
   it("follows album credits too, but they're weak (Mikal only shares Album A with Ty)", () => {
     const ty = computeSimilarity(makeGraph(), "Mikal Cronin", ["Ty Segall"]).pairs[0]!;
-    // instrument 0.35 x producer 0.4 x 0.9
-    expect(ty.strength).toBeCloseTo(0.35 * 0.4 * HOP_DAMPING);
-    expect(ty.score).toBe(13);
+    // instrument 0.35 x producer 0.4 (two hops: no damping)
+    expect(ty.strength).toBeCloseTo(0.35 * 0.4);
+    expect(ty.score).toBe(14);
   });
 
   it("scores an unconnected artist (Osees) at zero", () => {
@@ -242,12 +242,12 @@ describe("opened_for (concert ties)", () => {
   it("connects two openers of the same headliner, two weak hops", () => {
     const pair = computeSimilarity(makeConcertGraph(), "Earth Tongue", ["Flat Worms"]).pairs[0]!;
     expect(pair.path!.map((s) => s.to.name)).toEqual(["Osees", "Earth Tongue"]);
-    expect(pair.strength).toBeCloseTo(0.8 * 0.8 * HOP_DAMPING);
+    expect(pair.strength).toBeCloseTo(0.8 * 0.8);
   });
 
   it("is only as strong as every hop together: member x opened_for", () => {
     const pair = computeSimilarity(makeConcertGraph(), "John Dwyer", ["Flat Worms"]).pairs[0]!;
-    expect(pair.strength).toBeCloseTo(1.0 * 0.8 * HOP_DAMPING);
+    expect(pair.strength).toBeCloseTo(1.0 * 0.8);
   });
 });
 
@@ -280,7 +280,7 @@ describe("the path behind a pair (shown in its bottom sheet)", () => {
     const pair = computeSimilarity(makeGraph(), "GOGGS", ["Charles Moothart"]).pairs[0]!;
     expect(pair.strength).toBeCloseTo(pathStrength(pair.path!));
     expect(pair.score).toBe(Math.round(pair.strength! * 100));
-    expect(pair.score).toBe(81); // member x3, two extra hops: 0.9^2
+    expect(pair.score).toBe(90); // member x3: one hop past the two free ones
   });
 
   it("is empty for the same artist and null when unreachable", () => {
@@ -378,16 +378,18 @@ describe("strongest paths", () => {
   it("prefers a longer path of strong ties over a short weak one", () => {
     const pair = computeSimilarity(routes(), "A", ["B"]).pairs[0]!;
     expect(pair.distance).toBe(3);
-    expect(pair.score).toBe(81); // 1 x 1 x 1 x 0.9^2, beats produced_for's 30
+    expect(pair.score).toBe(90); // 1 x 1 x 1 x 0.9, beats produced_for's 30
   });
 
-  it("damps every hop after the first by HOP_DAMPING", () => {
+  it("damps every hop after the first two by HOP_DAMPING", () => {
     const blank = { id: "", name: "", type: "" };
     const step = (relType: string) => ({ from: blank, to: blank, relType, weight: relWeight(relType) });
     expect(pathStrength([])).toBe(1);
     expect(pathStrength([step("produced_for")])).toBeCloseTo(0.3);
-    expect(pathStrength([step("member_of"), step("member_of"), step("produced_for")])).toBeCloseTo(0.3 * HOP_DAMPING ** 2);
-    expect(pathLength([step("member_of"), step("produced_for")])).toBeCloseTo(-Math.log(0.3) + HOP_DISTANCE);
+    expect(pathStrength([step("member_of"), step("produced_for")])).toBeCloseTo(0.3);
+    expect(pathStrength([step("member_of"), step("member_of"), step("produced_for")])).toBeCloseTo(0.3 * HOP_DAMPING);
+    expect(pathStrength([step("member_of"), step("member_of"), step("member_of"), step("produced_for")])).toBeCloseTo(0.3 * HOP_DAMPING ** 2);
+    expect(pathLength([step("member_of"), step("member_of"), step("produced_for")])).toBeCloseTo(-Math.log(0.3) + HOP_DISTANCE);
   });
 
   it("doesn't follow paths past MAX_HOPS", () => {

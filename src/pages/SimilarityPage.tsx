@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { computeSimilarity, HOP_DAMPING, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
+import { computeSimilarity, FREE_HOPS, HOP_DAMPING, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { relationSentence } from "../graph/relationships";
@@ -232,12 +232,12 @@ export function SimilarityPage() {
   );
 }
 
-/** "1.00 × 0.45 × 0.45 × 0.9² = 0.16 → 16": how the strongest path's weights make the score. */
+/** "1.00 × 0.80 × 0.80 × 0.9 = 0.58 → 58": how the strongest path's weights make the score. */
 function scoreFormula(pair: PairScore): string {
   const path = pair.path;
   if (path == null) return "0";
   if (path.length === 0) return "Same artist: 100.";
-  const extra = path.length - 1;
+  const extra = Math.max(0, path.length - FREE_HOPS);
   const damping = extra === 0 ? "" : ` × ${HOP_DAMPING}${extra === 1 ? "" : superscript(extra)}`;
   const weights = path.map((s) => s.weight.toFixed(2)).join(" × ");
   return `${weights}${damping} = ${(pair.strength ?? 0).toFixed(2)} → ${pair.score}`;

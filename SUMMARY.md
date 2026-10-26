@@ -116,7 +116,8 @@ Similarity mode (artist-to-scene fit scoring):
         → Weighted graph: each relationship has a weight (REL_WEIGHTS: member_of 1.0,
           former_member_of 0.85, support_musician / collaborated_with / opened_for 0.8,
           produced_for 0.3), stored as an edge length -ln(weight) (REL_DISTANCES,
-          computed once), so strong ties are short; each hop after the first adds
+          computed once), so strong ties are short; the first FREE_HOPS (2) hops are
+          free (bandmates through their band score 100), each hop after that adds
           HOP_DISTANCE (-ln 0.9)
         → Hub damping (HUB_DAMPED): collaborated_with, produced_for and support_musician
           hops are weakened at an artist with more such links than typical (~90th
@@ -132,7 +133,7 @@ Similarity mode (artist-to-scene fit scoring):
           0.9 for two shows or more, however many.
           graph-neighbors returns the count too (Postgres relationships.count)
         → Pair score = 100 x e^(-path length) = the shortest path's (damped) weights
-          multiplied x 0.9 per hop after the first. One Dijkstra search from the
+          multiplied x 0.9 per hop after the second. One Dijkstra search from the
           compared artist finds the strongest path to every liked artist (strongestPaths):
           at most MAX_HOPS (6) hops, paths under MIN_STRENGTH (a score of 5) dropped,
           at most MAX_EXPANDED (10,000) artists expanded. graphDb.getNeighbors keeps its

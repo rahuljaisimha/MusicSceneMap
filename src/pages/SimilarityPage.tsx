@@ -3,6 +3,7 @@ import { computeSimilarity, type Connection, type PairScore, type SimilarityResu
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { relationSentence } from "../graph/relationships";
+import { addPicked, chipLabel, fromSuggestion, inputArtist, pickedKey, type PickedArtist } from "./pickedArtists";
 
 function scoreColor(score: number): string {
   if (score >= 70) return "#55efc4";
@@ -40,8 +41,10 @@ function relLabel(relType: string): string {
 
 export function SimilarityPage() {
   const [artistInput, setArtistInput] = useState("");
-  const [artists, setArtists] = useState<string[]>([]);
+  const [artists, setArtists] = useState<PickedArtist[]>([]);
   const [target, setTarget] = useState("");
+  // The artist picked from the compare dropdown, while its name is still in the input.
+  const [targetPick, setTargetPick] = useState<PickedArtist | null>(null);
   const [result, setResult] = useState<SimilarityResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,17 +60,16 @@ export function SimilarityPage() {
     return () => document.removeEventListener("keydown", onKey);
   }, [openPair]);
 
-  const addArtist = (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    if (!artists.includes(trimmed)) setArtists([...artists, trimmed]);
+  const addArtist = (artist: PickedArtist) => {
+    if (!artist.name.trim()) return;
+    setArtists(addPicked(artists, artist));
     setArtistInput("");
   };
 
-  const handleAddArtist = () => addArtist(artistInput);
+  const handleAddArtist = () => addArtist({ name: artistInput });
 
-  const handleRemoveArtist = (name: string) => {
-    setArtists(artists.filter((a) => a !== name));
+  const handleRemoveArtist = (artist: PickedArtist) => {
+    setArtists(artists.filter((a) => pickedKey(a) !== pickedKey(artist)));
   };
 
   const handleCompare = async () => {
@@ -80,8 +82,9 @@ export function SimilarityPage() {
     try {
       const tiered = await buildTieredGraphAccess();
       // Resolve any artists missing from the core graph via Tier 2/3 first.
-      await tiered.prepareArtists([target.trim(), ...artists]);
-      const res = computeSimilarity(tiered.build(), target.trim(), artists);
+      const targetArtist = inputArtist(target, targetPick);
+      await tiered.prepareArtists([targetArtist, ...artists]);
+      const res = computeSimilarity(tiered.build(), targetArtist, artists);
       setResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
@@ -108,7 +111,7 @@ export function SimilarityPage() {
               <ArtistAutocomplete
                 value={artistInput}
                 onChange={setArtistInput}
-                onSelect={(a) => addArtist(a.name)}
+                onSelect={(a) => addArtist(fromSuggestion(a))}
                 onEnter={handleAddArtist}
                 placeholder="Add an artist..."
                 inputStyle={styles.input}
@@ -127,14 +130,14 @@ export function SimilarityPage() {
             {artists.length > 0 && (
               <div style={styles.chipList}>
                 {artists.map((a) => (
-                  <span key={a} style={styles.chip}>
-                    {a}
+                  <span key={pickedKey(a)} style={styles.chip} title={a.disambiguation}>
+                    {chipLabel(a, artists)}
                     <button
                       type="button"
                       onClick={() => handleRemoveArtist(a)}
                       className="chip-remove"
                       style={styles.chipRemove}
-                      aria-label={`Remove ${a}`}
+                      aria-label={`Remove ${chipLabel(a, artists)}`}
                     >
                       ×
                     </button>
@@ -149,7 +152,10 @@ export function SimilarityPage() {
             <ArtistAutocomplete
               value={target}
               onChange={setTarget}
-              onSelect={(a) => setTarget(a.name)}
+              onSelect={(a) => {
+                setTarget(a.name);
+                setTargetPick(fromSuggestion(a));
+              }}
               onEnter={handleCompare}
               placeholder="e.g. Fuzz"
               inputStyle={styles.input}
@@ -235,10 +241,10 @@ export function SimilarityPage() {
                   style={{
                     ...styles.pairCard,
                     ...styles.pairButton,
-                    ...(openPair?.name === p.name ? styles.pairSelected : {}),
+                    ...(openPair === p ? styles.pairSelected : {}),
                   }}
                   onClick={() => setOpenPair(p)}
-                  aria-expanded={openPair?.name === p.name}
+                  aria-expanded={openPair === p}
                   aria-controls="connection-panel"
                 >
                   {card}

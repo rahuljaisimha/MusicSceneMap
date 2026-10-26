@@ -42,15 +42,39 @@ export interface PathStep {
   fromIsSource?: boolean;
 }
 
+/**
+ * An artist as the user gave it: a typed name, or the artist they picked from a
+ * dropdown with its MusicBrainz ID. Several artists can share a name ("Fuzz"),
+ * so a picked artist is looked up by its ID, never by name.
+ */
+export type ArtistRef = string | { name: string; id?: string };
+
+export function refName(ref: ArtistRef): string {
+  return typeof ref === "string" ? ref : ref.name;
+}
+
+export function refId(ref: ArtistRef): string | undefined {
+  return typeof ref === "string" ? undefined : ref.id;
+}
+
 /** Minimal graph interface the scorer depends on. */
 export interface GraphAccess {
   /** Resolve an artist name to a node (case-insensitive), or null if unknown. */
   findNodeByName(name: string): SimNode | null;
+  /** Resolve a node by id (MusicBrainz ID). Optional: without it, picked artists resolve by name. */
+  findNodeById?(id: string): SimNode | null;
   /**
    * All neighbors of a node (both directions), tagged with relationship type.
    * Includes album nodes — the scorer decides how to use them.
    */
   neighbors(nodeId: string): SimNeighbor[];
+}
+
+/** The node an artist reference means: by ID when it has one (and the graph can look ids up), else by name. */
+export function resolveArtist(graph: GraphAccess, ref: ArtistRef): SimNode | null {
+  const id = refId(ref);
+  if (id && graph.findNodeById) return graph.findNodeById(id);
+  return graph.findNodeByName(refName(ref));
 }
 
 // --- Relationship weights (PLACEHOLDER — tune later) ------------------------
@@ -337,11 +361,11 @@ export function scorePair(
   graph: GraphAccess,
   target: SimNode,
   targetSplit: Split,
-  listArtistName: string
+  listArtist: ArtistRef
 ): PairScore {
-  const node = graph.findNodeByName(listArtistName);
+  const node = resolveArtist(graph, listArtist);
   if (!node) {
-    return { name: listArtistName, found: false, distance: null, connections: [], score: 0, path: null };
+    return { name: refName(listArtist), found: false, distance: null, connections: [], score: 0, path: null };
   }
 
   if (node.id === target.id) {
@@ -409,17 +433,17 @@ export function scorePair(
  */
 export function computeSimilarity(
   graph: GraphAccess,
-  targetName: string,
-  listArtists: string[]
+  targetArtist: ArtistRef,
+  listArtists: ArtistRef[]
 ): SimilarityResult {
-  const target = graph.findNodeByName(targetName);
+  const target = resolveArtist(graph, targetArtist);
   if (!target) {
     return {
-      targetName,
+      targetName: refName(targetArtist),
       targetFound: false,
       overallScore: 0,
-      pairs: listArtists.map((name) => ({
-        name,
+      pairs: listArtists.map((a) => ({
+        name: refName(a),
         found: false,
         distance: null,
         connections: [],
@@ -430,7 +454,7 @@ export function computeSimilarity(
 
   const targetSplit = splitNeighbors(graph, target.id);
 
-  const pairs = listArtists.map((name) => scorePair(graph, target, targetSplit, name));
+  const pairs = listArtists.map((a) => scorePair(graph, target, targetSplit, a));
   const overallScore = aggregateScore(pairs);
   const sortedPairs = [...pairs].sort((a, b) => b.score - a.score);
 
@@ -446,10 +470,10 @@ export function computeSimilarity(
  */
 export function scoreArtistAgainstList(
   graph: GraphAccess,
-  artistName: string,
-  listArtists: string[]
+  artist: ArtistRef,
+  listArtists: ArtistRef[]
 ): { score: number; found: boolean; result: SimilarityResult } {
-  const result = computeSimilarity(graph, artistName, listArtists);
+  const result = computeSimilarity(graph, artist, listArtists);
   return { score: result.overallScore, found: result.targetFound, result };
 }
 

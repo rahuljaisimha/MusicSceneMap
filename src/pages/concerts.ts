@@ -8,7 +8,7 @@
  * hit rate can be improved later (more artists in SQLite, or a backend fallback).
  */
 
-import type { GraphAccess } from "./similarity";
+import type { ArtistRef, GraphAccess } from "./similarity";
 import { scoreArtistAgainstList } from "./similarity";
 import type { PollstarEvent } from "../api/pollstar";
 
@@ -47,7 +47,7 @@ export function headlineArtist(event: PollstarEvent): string | null {
 export function rankConcerts(
   graph: GraphAccess,
   events: PollstarEvent[],
-  listArtists: string[]
+  listArtists: ArtistRef[]
 ): RankedConcert[] {
   const scoreCache = new Map<string, { score: number; found: boolean }>();
 

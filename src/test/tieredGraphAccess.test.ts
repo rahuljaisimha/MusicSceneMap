@@ -13,6 +13,9 @@ function makeCore(): GraphAccess {
     findNodeByName(name) {
       return Object.values(nodes).find((n) => n.name.toLowerCase() === name.toLowerCase()) ?? null;
     },
+    findNodeById(id) {
+      return nodes[id] ?? null;
+    },
     neighbors(id): SimNeighbor[] {
       const out: SimNeighbor[] = [];
       for (const [s, t, rel] of edges) {
@@ -125,5 +128,45 @@ describe("TieredGraphAccess", () => {
 
     await tiered.prepareArtists(["Dup Band", "Dup Band"]);
     expect(pg).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TieredGraphAccess with picked artists (MusicBrainz IDs)", () => {
+  it("uses the core graph when it has the ID", async () => {
+    const pg = vi.fn().mockResolvedValue(null);
+    const mb = vi.fn().mockResolvedValue(null);
+    const tiered = new TieredGraphAccess(makeCore(), pg, mb);
+    const tiers = await tiered.prepareArtists([{ name: "Fuzz", id: "fuzz" }]);
+    expect(tiers.get("fuzz")).toBe("core");
+    expect(pg).not.toHaveBeenCalled();
+    expect(tiered.build().findNodeById?.("fuzz")?.name).toBe("Fuzz");
+  });
+
+  it("fetches an out-of-core pick by its ID, even when the core has another artist with its name", async () => {
+    const other = { id: "fuzz-band", name: "Fuzz", type: "group" };
+    const pg = vi.fn().mockResolvedValue({
+      node: other,
+      neighbors: [{ node: { id: "ty", name: "Ty Segall", type: "person" }, relType: "member_of" }],
+    });
+    const mb = vi.fn().mockResolvedValue(null);
+    const tiered = new TieredGraphAccess(makeCore(), pg, mb);
+
+    const tiers = await tiered.prepareArtists([{ name: "Fuzz", id: "fuzz-band" }]);
+    expect(tiers.get("fuzz-band")).toBe("postgres");
+    expect(pg).toHaveBeenCalledWith({ name: "Fuzz", id: "fuzz-band" });
+
+    const g = tiered.build();
+    expect(g.findNodeById?.("fuzz-band")).toEqual(other);
+    expect(g.findNodeByName("Fuzz")?.id).toBe("fuzz"); // a typed name still means the core's Fuzz
+  });
+
+  it("passes the ID to MusicBrainz when Postgres doesn't have the pick", async () => {
+    const pg = vi.fn().mockResolvedValue(null);
+    const mb = vi.fn().mockResolvedValue({ node: { id: "mb-1", name: "Rare Act", type: "group" }, neighbors: [] });
+    const tiered = new TieredGraphAccess(makeCore(), pg, mb);
+    const tiers = await tiered.prepareArtists([{ name: "Rare Act", id: "mb-1" }, { name: "Rare Act", id: "mb-1" }]);
+    expect(tiers.get("mb-1")).toBe("musicbrainz");
+    expect(mb).toHaveBeenCalledTimes(1);
+    expect(mb).toHaveBeenCalledWith({ name: "Rare Act", id: "mb-1" });
   });
 });

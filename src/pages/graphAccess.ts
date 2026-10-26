@@ -12,12 +12,16 @@
  */
 
 import type { GraphAccess, SimNode, SimNeighbor } from "./similarity";
-import { findNodeByName, getNeighbors } from "../db/graphDb";
+import { findNodeById, findNodeByName, getNeighbors } from "../db/graphDb";
 
 export function buildGraphAccess(): GraphAccess {
   return {
     findNodeByName(name: string): SimNode | null {
       const node = findNodeByName(name);
+      return node ? { id: node.id, name: node.name, type: node.type } : null;
+    },
+    findNodeById(id: string): SimNode | null {
+      const node = findNodeById(id);
       return node ? { id: node.id, name: node.name, type: node.type } : null;
     },
     neighbors(nodeId: string): SimNeighbor[] {

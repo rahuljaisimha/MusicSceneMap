@@ -110,7 +110,7 @@ export const REL_WEIGHTS: Record<string, number> = {
   support_musician: 0.8, // touring or supporting musician
   collaborator: 0.8, // album co-credit between two people (graphs built before collaborated_with)
   collaborated_with: 0.8, // sang, played or performed on the other artist's records
-  produced_for: 0.5, // produced the other artist's records
+  produced_for: 0.3, // produced the other artist's records: weak once, never as close as the others (REPEATS)
   opened_for: 0.8, // opened for the headliner at least once (concert-database)
   // Album credits (person -> album), from older graphs that had album nodes.
   producer: 0.4,
@@ -147,15 +147,18 @@ export function relDistance(relType: string): number {
  * How repeating a relationship makes it stronger. REL_WEIGHTS is the weight of a
  * one-time tie.
  *  - `closeGap`: each repeat after the first closes this share of the remaining
- *    gap to 1.0, so a frequent collaborator is closer than a one-time one
- *    (0.8 -> 0.84 -> 0.87 ... 0.97 at 10 songs).
+ *    gap to `max` (default 1.0), so a frequent collaborator is closer than a
+ *    one-time one (collaborating: 0.8 -> 0.84 -> 0.87 ... 0.97 at 10 songs).
+ *    Producing climbs slowly to a ceiling below every other relationship's
+ *    one-time weight: 0.30 once, 0.46 for 5 songs, 0.61 for an album (12),
+ *    0.71 for two, never above 0.75.
  *  - `repeated`: the weight for twice or more, however many more: opening for a
  *    band twice is as telling as opening for them 400 times, and once is
  *    already close.
  */
-export const REPEATS: Record<string, { closeGap: number } | { repeated: number }> = {
+export const REPEATS: Record<string, { closeGap: number; max?: number } | { repeated: number }> = {
   collaborated_with: { closeGap: 0.2 },
-  produced_for: { closeGap: 0.2 },
+  produced_for: { closeGap: 0.1, max: 0.75 },
   opened_for: { repeated: 0.9 },
 };
 
@@ -165,7 +168,8 @@ export function repeatWeight(relType: string, count?: number): number {
   const rule = REPEATS[relType];
   if (!rule || count === undefined || count <= 1) return w;
   if ("repeated" in rule) return Math.max(w, rule.repeated);
-  return 1 - (1 - w) * (1 - rule.closeGap) ** (count - 1);
+  const max = rule.max ?? 1;
+  return max - (max - w) * (1 - rule.closeGap) ** (count - 1);
 }
 
 // --- Hub damping --------------------------------------------------------------

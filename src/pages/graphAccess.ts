@@ -28,10 +28,11 @@ export function buildGraphAccess(): GraphAccess {
       return getRelDegree(nodeId, relType, HUB_DAMPED_TYPES) ?? undefined;
     },
     neighbors(nodeId: string): SimNeighbor[] {
-      return getNeighbors(nodeId).map(({ node, relType, outgoing }) => ({
+      return getNeighbors(nodeId).map(({ node, relType, outgoing, count }) => ({
         node: { id: node.id, name: node.name, type: node.type },
         relType,
         outgoing,
+        ...(count !== undefined ? { count } : {}),
       }));
     },
   };

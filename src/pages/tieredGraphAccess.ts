@@ -222,7 +222,12 @@ export async function buildTieredGraphAccess(): Promise<TieredGraphAccess> {
     if (!res.found || !res.artist) return null;
     return {
       node: res.artist,
-      neighbors: res.neighbors.map((n) => ({ node: n.node, relType: n.relType })),
+      neighbors: res.neighbors.map((n) => ({
+        node: n.node,
+        relType: n.relType,
+        ...(n.outgoing !== undefined ? { outgoing: n.outgoing } : {}),
+        ...(n.count !== undefined ? { count: n.count } : {}),
+      })),
     };
   };
 

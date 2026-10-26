@@ -125,6 +125,10 @@ Similarity mode (artist-to-scene fit scoring):
           never damped. Counts come from graphDb.getRelDegree (one GROUP BY over those
           edge types the first time it's asked); an artist fetched from Postgres or
           MusicBrainz is counted from the links that came with it
+        → Repeats (REPEATS, from edges.count): REL_WEIGHTS is a one-time tie. Each extra
+          song credit closes 20% of the gap to 1.0 (collaborated_with 0.8 -> 0.97 at 10
+          songs); opened_for is 0.8 once and 0.9 for two shows or more, however many.
+          graph-neighbors returns the count too (Postgres relationships.count)
         → Pair score = 100 x e^(-path length) = the shortest path's (damped) weights
           multiplied x 0.9 per hop after the first. One Dijkstra search from the
           compared artist finds the strongest path to every liked artist (strongestPaths):
@@ -303,9 +307,11 @@ CREATE TABLE genres (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE edges (
     source TEXT NOT NULL,
     target TEXT NOT NULL,
-    rel_type TEXT NOT NULL  -- "member_of", "former_member_of", "support_musician",
+    rel_type TEXT NOT NULL, -- "member_of", "former_member_of", "support_musician",
                             -- "collaborated_with" / "produced_for" (source sang/played on, or produced,
                             --   target's records), "opened_for" (source opened for target; concert-database)
+    count INTEGER           -- how often: song credits (collaborated_with / produced_for), shows
+                            --   (opened_for); NULL for band edges and in graphs built before it
 );
 
 CREATE TABLE graph_meta (key TEXT PRIMARY KEY, value TEXT);   -- build info: dump, seeds, hops; opened_for counts

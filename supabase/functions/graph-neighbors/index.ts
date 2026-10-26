@@ -19,8 +19,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
  * Response:
  *   { found: boolean,
  *     artist: { id, name, type } | null,
- *     neighbors: [{ node: { id, name, type }, relType: string, outgoing: boolean }] }
- *   (outgoing: the artist is the edge's source, e.g. the producer in produced_for)
+ *     neighbors: [{ node: { id, name, type }, relType: string, outgoing: boolean, count: number }] }
+ *   (outgoing: the artist is the edge's source, e.g. the producer in produced_for;
+ *    count: song credits for collaborated_with / produced_for, else 1)
  *
  * Search mode, for the app's artist dropdowns (no neighbors, never logs: a
  * partial name typed into a dropdown isn't a lookup that missed):
@@ -171,18 +172,21 @@ serve(async (req) => {
     // 2. Fetch 1-hop edges in both directions.
     const { data: edges } = await supabase
       .from("relationships")
-      .select("source_id, target_id, rel_type")
+      .select("source_id, target_id, rel_type, count")
       .or(`source_id.eq.${artist.mbid},target_id.eq.${artist.mbid}`);
 
     const rels = (edges ?? []).filter((e) => ARTIST_REL_TYPES.has(e.rel_type));
 
-    // Collect neighbor ids (the other end of each edge) + their rel_type.
-    const neighborRel = new Map<string, { relType: string; outgoing: boolean }>();
+    // Collect neighbor ids (the other end of each edge) + their rel_type and
+    // count (song credits for collaborations; 1 for band edges).
+    const neighborRel = new Map<string, { relType: string; outgoing: boolean; count: number }>();
     for (const e of rels) {
       const outgoing = e.source_id === artist.mbid;
       const neighborId = outgoing ? e.target_id : e.source_id;
       if (neighborId === artist.mbid) continue;
-      if (!neighborRel.has(neighborId)) neighborRel.set(neighborId, { relType: e.rel_type, outgoing });
+      if (!neighborRel.has(neighborId)) {
+        neighborRel.set(neighborId, { relType: e.rel_type, outgoing, count: e.count ?? 1 });
+      }
     }
 
     // 3. Resolve neighbor artist rows (chunked to avoid oversized IN lists).
@@ -200,9 +204,9 @@ serve(async (req) => {
 
     const neighbors = [...neighborRel.entries()]
       .filter(([id]) => nodes.has(id))
-      .map(([id, { relType, outgoing }]) => {
+      .map(([id, { relType, outgoing, count }]) => {
         const n = nodes.get(id)!;
-        return { node: { id: n.mbid, name: n.name, type: n.type }, relType, outgoing };
+        return { node: { id: n.mbid, name: n.name, type: n.type }, relType, outgoing, count };
       });
 
     return json({

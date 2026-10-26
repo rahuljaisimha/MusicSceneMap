@@ -37,6 +37,8 @@ export interface SimNeighbor {
   relType: string;
   /** True when the looked-up node is the edge's source; undefined when the source doesn't say. */
   outgoing?: boolean;
+  /** How often: song credits for collaborated_with / produced_for, shows for opened_for. Unknown when absent. */
+  count?: number;
 }
 
 /** One hop of a path: `from` and `to` are joined by a `relType` edge. */
@@ -46,8 +48,10 @@ export interface PathStep {
   relType: string;
   /** The weight this hop counted for, 0..1: REL_WEIGHTS, damped for hub artists (see HUB_DAMPED). */
   weight: number;
-  /** The relationship's undamped weight (REL_WEIGHTS). Defaults to `weight`. */
+  /** The weight before hub damping: REL_WEIGHTS, raised for repeats (see REPEATS). Defaults to `weight`. */
   baseWeight?: number;
+  /** How often (song credits, shows), when the graph knows. */
+  count?: number;
   /** The hub artists that damped this hop: their count of this kind of link. */
   hubs?: Array<{ node: SimNode; count: number }>;
   /** True when `from` is the edge's source (e.g. the member, or the opener); undefined when unknown. */
@@ -135,6 +139,33 @@ const DEFAULT_REL_DISTANCE = Math.log(1 / DEFAULT_REL_WEIGHT);
 
 export function relDistance(relType: string): number {
   return REL_DISTANCES[relType] ?? DEFAULT_REL_DISTANCE;
+}
+
+// --- Repeats ------------------------------------------------------------------
+
+/**
+ * How repeating a relationship makes it stronger. REL_WEIGHTS is the weight of a
+ * one-time tie.
+ *  - `closeGap`: each repeat after the first closes this share of the remaining
+ *    gap to 1.0, so a frequent collaborator is closer than a one-time one
+ *    (0.8 -> 0.84 -> 0.87 ... 0.97 at 10 songs).
+ *  - `repeated`: the weight for twice or more, however many more: opening for a
+ *    band twice is as telling as opening for them 400 times, and once is
+ *    already close.
+ */
+export const REPEATS: Record<string, { closeGap: number } | { repeated: number }> = {
+  collaborated_with: { closeGap: 0.2 },
+  produced_for: { closeGap: 0.2 },
+  opened_for: { repeated: 0.9 },
+};
+
+/** A relationship's weight given how often it happened (unknown count = once). */
+export function repeatWeight(relType: string, count?: number): number {
+  const w = relWeight(relType);
+  const rule = REPEATS[relType];
+  if (!rule || count === undefined || count <= 1) return w;
+  if ("repeated" in rule) return Math.max(w, rule.repeated);
+  return 1 - (1 - w) * (1 - rule.closeGap) ** (count - 1);
 }
 
 // --- Hub damping --------------------------------------------------------------
@@ -304,11 +335,13 @@ export function strongestPaths(
     if (hops.get(id)! >= MAX_HOPS || ++expanded > MAX_EXPANDED) continue;
 
     const from = nodes.get(id)!;
-    for (const { node, relType, outgoing } of graph.neighbors(id)) {
+    for (const { node, relType, outgoing, count } of graph.neighbors(id)) {
       if (settled.has(node.id)) continue;
       const atFrom = hubLength(graph, from, relType);
       const atTo = hubLength(graph, node, relType);
-      const edge = relDistance(relType) + atFrom.length + atTo.length;
+      const repeated = count !== undefined && count > 1 && relType in REPEATS;
+      const base = repeated ? repeatWeight(relType, count) : relWeight(relType);
+      const edge = (repeated ? Math.log(1 / base) : relDistance(relType)) + atFrom.length + atTo.length;
       const nd = d + edge + HOP_DISTANCE;
       if (nd - HOP_DISTANCE > MAX_LENGTH || nd >= (dist.get(node.id) ?? Infinity)) continue;
       dist.set(node.id, nd);
@@ -323,7 +356,8 @@ export function strongestPaths(
         to: node,
         relType,
         weight: Math.exp(-edge),
-        baseWeight: relWeight(relType),
+        baseWeight: base,
+        ...(count !== undefined ? { count } : {}),
         ...(hubs.length ? { hubs } : {}),
         fromIsSource: outgoing,
       });

@@ -97,8 +97,12 @@ def add_edges(graph_db: Path, pairs: list[tuple], acts: dict[str, tuple], ledger
                              (mbid, name, node_type(typ), disamb))
             else:
                 conn.execute("INSERT INTO nodes (id, name, type) VALUES (?, ?, ?)", (mbid, name, node_type(typ)))
-        conn.executemany("INSERT INTO edges (source, target, rel_type) VALUES (?, ?, ?)",
-                         [(o, h, REL_TYPE) for o, h, _ in pairs])
+        # count = shows the opener played before that headliner (graphs built before the
+        # count column get it added here; their other edges' counts stay NULL).
+        if "count" not in {r[1] for r in conn.execute("PRAGMA table_info(edges)")}:
+            conn.execute("ALTER TABLE edges ADD COLUMN count INTEGER")
+        conn.executemany("INSERT INTO edges (source, target, rel_type, count) VALUES (?, ?, ?, ?)",
+                         [(o, h, REL_TYPE, n) for o, h, n in pairs])
 
         # Remember which nodes came from the ledger (so a re-run can drop stale ones), and when.
         conn.execute("DROP TABLE IF EXISTS graph_meta_added_nodes")

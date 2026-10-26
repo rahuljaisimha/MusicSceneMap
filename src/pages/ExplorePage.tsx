@@ -7,7 +7,7 @@ import { loadVisibleRels, saveVisibleRels } from "../graph/relationships";
 import { DebugConsole } from "../components/DebugConsole";
 import { SceneGraph } from "../graph/SceneGraph";
 import { getDb, isDbLoaded } from "../db/graphDb";
-import { findArtist, findArtistById, getArtistNeighbors } from "../db/graphSource";
+import { findArtist, findArtistById, getArtistNeighbors, inLocalGraph } from "../db/graphSource";
 import { debugLog } from "../debug/DebugLog";
 import { resolveSearchTarget, type SearchResolution } from "./searchResolution";
 import type { GraphNode, NodeType, EdgeType } from "../graph/types";
@@ -48,11 +48,11 @@ function mapEdgeType(dbRelType: string): EdgeType {
  * else by name. Only person/group nodes — albums are skipped. Works before the
  * graph DB has downloaded (graphSource falls back to the server).
  */
-async function expandArtist(target: SearchResolution, graph: SceneGraph): Promise<boolean> {
+async function expandArtist(target: SearchResolution, graph: SceneGraph): Promise<string | null> {
   const node = target.by === "id"
     ? await findArtistById(target.id)
     : await findArtist(target.name, { partial: true });
-  if (!node) return false;
+  if (!node) return null;
   const { id, name, type } = node;
   const nodeType = mapNodeType(type);
 
@@ -91,7 +91,7 @@ async function expandArtist(target: SearchResolution, graph: SceneGraph): Promis
     });
   }
 
-  return true;
+  return id;
 }
 
 export function ExplorePage() {
@@ -153,6 +153,12 @@ export function ExplorePage() {
             reportMiss(resolution.by === "id" ? resolution.id : artistName, "explore-not-found");
           }
         } else {
+          // Found on the server but missing from the local graph: still worth
+          // logging, so concert-database crawls the artist into the next build.
+          if (lookedUpLocally && !inLocalGraph(found)) {
+            const { reportMiss } = await import("../api/supabase");
+            reportMiss(found, "explore-not-in-graph");
+          }
           graph.save();
           setVersion((v) => v + 1);
         }

@@ -1,11 +1,12 @@
 /**
  * Async graph lookups that work before the browser graph DB has loaded.
  *
- * The ~38MB graph.db.gz downloads in the background (preloadDb in main.tsx).
- * Once it's loaded, these read the local sql.js copy. Until then they ask the
- * Postgres graph-neighbors edge function, which holds the same dataset, with
- * miss logging turned off: a miss while the local graph is still downloading
- * says nothing about coverage, so nothing goes into search_misses.
+ * The ~48MB graph.db.gz downloads in the background (preloadDb in main.tsx).
+ * Once it's loaded, these read the local sql.js copy first. Until then, and for
+ * any artist the local copy doesn't have (it's cut to fit the download; the
+ * server holds every artist), they ask the Postgres graph-neighbors edge
+ * function, with miss logging turned off: callers decide what counts as a miss
+ * (Explore logs an artist the local graph lacks itself).
  *
  * Remote answers are an artist plus its 1-hop neighbors (artists only, no
  * albums), which is all Explore expansion and Discover's related-band search
@@ -49,31 +50,38 @@ function fetchRemote(params: { name: string } | { mbid: string }): Promise<Remot
 }
 
 /**
- * Find an artist by name (case-insensitive exact match). With `partial`, the
- * local graph also falls back to a substring match; the server only does exact.
- * Album nodes are never returned.
+ * Find an artist by name (case-insensitive exact match). The local graph first,
+ * then the server: the local graph is cut to fit the download, so an artist it
+ * doesn't have can still be on the server (which holds every artist). With
+ * `partial`, the local graph's substring match is the last resort (the server
+ * only does exact). Album nodes are never returned.
  */
 export async function findArtist(name: string, options: { partial?: boolean } = {}): Promise<NodeRecord | null> {
   if (isDbLoaded()) {
     const node = findNodeByName(name);
     if (node) return node.type === "album" ? null : node;
-    if (!options.partial) return null;
-    return searchNodes(name, 10).find((n) => n.type !== "album") ?? null;
   }
-  return (await fetchRemote({ name }))?.node ?? null;
+  const remote = (await fetchRemote({ name }).catch(() => null))?.node ?? null;
+  if (remote || !isDbLoaded() || !options.partial) return remote;
+  return searchNodes(name, 10).find((n) => n.type !== "album") ?? null;
 }
 
-/** Find an artist by MusicBrainz ID. Album nodes are never returned. */
+/** Find an artist by MusicBrainz ID: the local graph, else the server. Album nodes are never returned. */
 export async function findArtistById(id: string): Promise<NodeRecord | null> {
   if (isDbLoaded()) {
     const node = findNodeById(id);
-    return node && node.type !== "album" ? node : null;
+    if (node) return node.type !== "album" ? node : null;
   }
   return (await fetchRemote({ mbid: id }))?.node ?? null;
 }
 
-/** An artist's 1-hop neighbors (both edge directions). */
+/** Whether the local graph has loaded and has this artist. */
+export function inLocalGraph(id: string): boolean {
+  return isDbLoaded() && findNodeById(id) !== null;
+}
+
+/** An artist's 1-hop neighbors (both edge directions): from the local graph if it has the artist, else the server. */
 export async function getArtistNeighbors(id: string): Promise<Neighbor[]> {
-  if (isDbLoaded()) return getNeighbors(id);
+  if (inLocalGraph(id)) return getNeighbors(id);
   return (await fetchRemote({ mbid: id }))?.neighbors ?? [];
 }

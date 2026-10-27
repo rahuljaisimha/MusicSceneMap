@@ -1,5 +1,5 @@
 /**
- * Pollstar client (browser-side).
+ * Pollstar client.
  *
  * Pollstar has a paid API, but its website backs onto public JSON endpoints we
  * can read for upcoming events. We keep usage polite:
@@ -19,12 +19,18 @@
  *          artistType }], tickets:[{ name, url, time }] }] }
  *     NOTE: fromDate MUST be today-or-later; past dates are subscription-gated.
  *
- * CORS: Pollstar sends no Access-Control-Allow-Origin header (same as
- * Setlist.fm). In dev we use Vite proxies; in prod a public CORS proxy.
+ * Our server first: both calls go to the pollstar-events function, which asks
+ * Pollstar itself and shares a 24-hour cache between every visitor (a venue is
+ * fetched from Pollstar at most once a day, whoever asks), and keeps the events
+ * for concert-database. Only when it can't get the data (Pollstar refusing with
+ * nothing cached) does the browser ask Pollstar directly.
+ *
+ * CORS (that fallback): Pollstar sends no Access-Control-Allow-Origin header
+ * (same as Setlist.fm). In dev we use Vite proxies; in prod a public CORS proxy.
  */
 
 import { cachedFetch } from "./cache";
-import { keepUserRequestedData } from "./supabase";
+import { pollstarViaServer } from "./supabase";
 import { debugLog } from "../debug/DebugLog";
 
 const isDev = import.meta.env.DEV;
@@ -207,7 +213,10 @@ export async function searchVenues(query: string): Promise<PollstarVenue[]> {
     key,
     async () => {
       debugLog.log(`Pollstar autocomplete: "${query}"`);
-      const raw = await pollstarFetch<RawAutocomplete>(autocompleteUrl(query));
+      // Our server's shared cache first; the browser asks Pollstar only if it can't.
+      const raw =
+        (await pollstarViaServer<RawAutocomplete>({ search: query })) ??
+        (await pollstarFetch<RawAutocomplete>(autocompleteUrl(query)));
       const venues = parseVenues(raw).sort((a, b) => b.rank - a.rank);
       debugLog.log(`Pollstar: ${venues.length} venues for "${query}"`);
       return venues;
@@ -218,13 +227,14 @@ export async function searchVenues(query: string): Promise<PollstarVenue[]> {
 
 /**
  * Fetch upcoming events for a venue (from today out to `yearsAhead` years).
- * `fromDate` is always today-or-later (Pollstar gates past dates). With
- * `venue`, a fresh response (not a cached one) is also kept as user-requested
- * data for concert-database.
+ * `fromDate` is always today-or-later (Pollstar gates past dates). Asks our
+ * pollstar-events function first (a cache shared by every visitor; `search`,
+ * the venue search that found the venue, gives the server its name and city),
+ * and Pollstar from the browser only if the function can't get it.
  */
 export async function getUpcomingEvents(
   venueId: string,
-  opts: { pageSize?: number; yearsAhead?: number; venue?: PollstarVenue } = {}
+  opts: { pageSize?: number; yearsAhead?: number; search?: string } = {}
 ): Promise<PollstarEvent[]> {
   const pageSize = opts.pageSize ?? 25;
   const yearsAhead = opts.yearsAhead ?? 4;
@@ -249,11 +259,9 @@ export async function getUpcomingEvents(
         newOnly: "false",
       }).toString();
       debugLog.log(`Pollstar events: venue ${venueId} from ${from}`);
-      const raw = await pollstarFetch<RawEventsResponse>(eventsUrl(venueId, qs));
-      if (opts.venue) {
-        const { id, name, city, state, location } = opts.venue;
-        keepUserRequestedData("pollstar", { venue: { id, name, city, state, location }, events: raw });
-      }
+      const raw =
+        (await pollstarViaServer<RawEventsResponse>({ venue: venueId, search: opts.search })) ??
+        (await pollstarFetch<RawEventsResponse>(eventsUrl(venueId, qs)));
       const events = parseEvents(raw);
       debugLog.log(`Pollstar: ${events.length} upcoming events for venue ${venueId}`);
       return events;

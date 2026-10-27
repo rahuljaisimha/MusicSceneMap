@@ -22,7 +22,10 @@ rebuilt with one hop fewer around concert-database's artists until it fits.
 
 Edges: band relationships, and `produced_for` / `collaborated_with` from an
 artist to the artists whose records they produced or sang/played/performed on
-(not between a band and its members: the membership edge covers that).
+(not between a band and its members: the membership edge covers that). A song
+credited to several artists ("Evan Honer & Wyatt Flores") adds a
+`collaborated_with` from each of the others to the first-credited artist (only
+between artists already in the graph: shared songs don't add record artists).
 
 Genres: each artist's MusicBrainz genres with 2+ votes (a genre one person
 tagged is dropped), most voted first: the top 3, plus any tied with the third

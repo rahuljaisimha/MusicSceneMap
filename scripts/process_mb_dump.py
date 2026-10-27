@@ -27,7 +27,9 @@ Supabase keeps the full set.
 
 Edges: band relationships, plus collaborations: a producer / vocal / instrument / performer
 credit on another artist's record becomes one "produced_for" or
-"collaborated_with" edge to that record's artist (see build_collaborations).
+"collaborated_with" edge to that record's artist, and a song credited to several
+artists ("Evan Honer & Wyatt Flores", "A feat. B") becomes a "collaborated_with"
+edge from each of the others to the first-credited artist (see build_collaborations).
 
 Genres: each artist's MusicBrainz genres (tags that are on MusicBrainz's genre
 list) with at least MIN_GENRE_VOTES votes, most voted first: the top
@@ -521,6 +523,53 @@ def parse_artist_credit_name(data_dir: Path) -> dict[int, int]:
     return credit_to_artist
 
 
+def parse_shared_credits(data_dir: Path) -> dict[int, list[int]]:
+    """artist_credit id -> its artists in credit order, for credits naming two or
+    more artists ("Evan Honer & Wyatt Flores", "A feat. B")."""
+    acn_file = data_dir / "mbdump" / "artist_credit_name"
+    print("Parsing artist_credit_name table (credits naming several artists)...")
+    multi = set()
+    with open(acn_file, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split("\t", 3)
+            if len(parts) >= 3 and parts[1] != "0":
+                multi.add(int(parts[0]))
+    names: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    with open(acn_file, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split("\t", 3)
+            if len(parts) >= 3:
+                credit_id = int(parts[0])
+                if credit_id in multi:
+                    names[credit_id].append((int(parts[1]), int(parts[2])))
+    shared = {}
+    for credit_id, rows in names.items():
+        ids = list(dict.fromkeys(artist for _, artist in sorted(rows)))
+        if len(ids) >= 2:
+            shared[credit_id] = ids
+    print(f"  Found {len(shared)} artist credits naming two or more artists")
+    return shared
+
+
+def parse_shared_songs(data_dir: Path, shared: dict[int, list[int]]) -> list[tuple[int, list[int]]]:
+    """(recording id, its artists in credit order) for every song credited to several artists."""
+    # recording columns: id | gid | name | artist_credit | length | ...
+    songs = []
+    print("Parsing recording table (songs credited to several artists)...")
+    with open(data_dir / "mbdump" / "recording", "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split("\t", 4)
+            if len(parts) >= 4:
+                try:
+                    ids = shared.get(int(parts[3]))
+                except ValueError:
+                    continue
+                if ids:
+                    songs.append((int(parts[0]), ids))
+    print(f"  Found {len(songs)} songs credited to several artists")
+    return songs
+
+
 def parse_artist_recording_relationships(
     data_dir: Path,
     links: dict[int, tuple[int, bool]],
@@ -553,6 +602,12 @@ def parse_artist_recording_relationships(
 # apart; engineering credits (mix, engineer, recording) are left out. `count` is
 # the number of song credits behind the edge (one per credited recording, per role).
 # Albums aren't stored: no album nodes, no album table.
+#
+# A song credited to several artists ("Evan Honer & Wyatt Flores") is a
+# collaboration too, even without a vocal / instrument credit: one
+# "collaborated_with" edge from each of the other artists to the first-credited
+# one, one count per song. A song already counted through a performing credit by
+# the same artist isn't counted twice.
 
 COLLAB_REL_TYPES = {
     "producer": "produced_for",        # produced their record
@@ -570,8 +625,17 @@ def build_collaborations(
     credit_to_artist: dict[int, int],
     artists: dict[int, dict],
     relationships: list[tuple[int, int, str, bool]] = (),
-) -> dict[tuple[str, str, str], int]:
-    """(contributor MBID, album artist MBID, rel_type) -> number of song credits.
+    shared_songs: list[tuple[int, list[int]]] = (),
+) -> tuple[dict[tuple[str, str, str], int], set[tuple[str, str, str]]]:
+    """(contributor MBID, album artist MBID, rel_type) -> number of song credits,
+    and the pairs that come only from shared songs.
+
+    shared_songs: (recording id, artists in credit order) for songs credited to
+    several artists; each artist after the first gets a collaborated_with credit
+    to the first, unless they already have a performing credit on that song.
+    Pairs known only from shared songs don't bring new artists into the graph
+    (see record_artists): there are about twice as many as all the other
+    collaborations, and adding their artists made graph.db.gz ~40 MB bigger.
 
     Skipped: credits on an artist's own records, credits between a band and its
     (current or former) members (the member_of / former_member_of edge already
@@ -605,12 +669,32 @@ def build_collaborations(
         if owner_gid == VARIOUS_ARTISTS:
             continue
         counts[(artists[artist_id]["gid"], owner_gid, rel)] += 1
+    shared_recordings = {recording_id for recording_id, _ in shared_songs}
+    performed = {(artist_id, recording_id) for artist_id, recording_id, credit in artist_recording_rels
+                 if recording_id in shared_recordings and COLLAB_REL_TYPES.get(credit) == "collaborated_with"}
+    before = set(counts)
+    shared_credits = 0
+    for recording_id, ids in shared_songs:
+        owner = ids[0]
+        if owner not in artists or artists[owner]["gid"] == VARIOUS_ARTISTS:
+            continue
+        owner_gid = artists[owner]["gid"]
+        for artist_id in ids[1:]:
+            if artist_id not in artists or (artist_id, recording_id) in performed:
+                continue
+            if (artist_id, owner) in members:
+                skipped_members += 1
+                continue
+            counts[(artists[artist_id]["gid"], owner_gid, "collaborated_with")] += 1
+            shared_credits += 1
     by_type = defaultdict(int)
     for (_, _, rel) in counts:
         by_type[rel] += 1
     print(f"  Collaborations: {len(counts)} ({dict(by_type)}); {skipped_members} song credits between"
           " a band and its members skipped")
-    return counts
+    shared_only = set(counts) - before
+    print(f"  Songs credited to several artists: {shared_credits} credits, {len(shared_only)} new pairs")
+    return counts, shared_only
 
 
 # --- Which artists are in the graph -------------------------------------------
@@ -696,14 +780,18 @@ def seed_budgets(curated: set[str], concert: set[str], concert_hops: int) -> dic
     return budgets
 
 
-def record_artists(collaborations: dict[tuple[str, str, str], int], reachable: set[str]) -> set[str]:
+def record_artists(collaborations: dict[tuple[str, str, str], int], reachable: set[str],
+                   shared_only: set[tuple[str, str, str]] = frozenset()) -> set[str]:
     """Artists outside `reachable` whose records a reachable artist played on or produced.
+
+    Pairs in `shared_only` (known only from a song credited to both) don't count:
+    their edges are kept only when both artists are in the graph anyway.
 
     The browser graph and Postgres both include them (with those collaborations),
     so an artist known only through the records others worked on (e.g. Zach Bryan,
     whose records Bruce Springsteen and Kyle Nix played on) is there too.
     """
-    return {owner for (credited, owner, _) in collaborations if credited in reachable} - reachable
+    return {key[1] for key in collaborations if key[0] in reachable and key not in shared_only} - reachable
 
 
 def bfs_reachable(
@@ -862,13 +950,14 @@ def load_graph_inputs():
     credits = parse_artist_recording_relationships(DATA_DIR, links, link_types, ar_ids)
     recording_to_rg, release_groups = build_recording_to_release_group(DATA_DIR)
     credit_to_artist = parse_artist_credit_name(DATA_DIR)
-    collaborations = build_collaborations(credits, recording_to_rg, release_groups, credit_to_artist, artists,
-                                          relationships)
-    del credits, recording_to_rg, release_groups, credit_to_artist
+    shared_songs = parse_shared_songs(DATA_DIR, parse_shared_credits(DATA_DIR))
+    collaborations, shared_only = build_collaborations(credits, recording_to_rg, release_groups, credit_to_artist,
+                                                       artists, relationships, shared_songs)
+    del credits, recording_to_rg, release_groups, credit_to_artist, shared_songs
     print()
     curated = resolve_curated_seeds(artists)
     concert = concertdb_seeds(CONCERTDB_LEDGER, artists)
-    return artists, relationships, collaborations, curated, concert
+    return artists, relationships, collaborations, shared_only, curated, concert
 
 
 def main():
@@ -889,14 +978,14 @@ def main():
     download_dump_tables(dump_url)
     download_derived_tables(dump_url)
     print()
-    artists, relationships, collaborations, curated, concert = load_graph_inputs()
+    artists, relationships, collaborations, shared_only, curated, concert = load_graph_inputs()
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     gz_path = OUTPUT_FILE.with_suffix(".db.gz")
     for hops in range(args.concertdb_hops, -1, -1):
         print(f"\nconcert-database artists at {hops} hops (curated seeds at {CURATED_HOPS}):")
         reachable = bfs_reachable(seed_budgets(curated, concert, hops), relationships, artists)
-        owners = record_artists(collaborations, reachable)
+        owners = record_artists(collaborations, reachable, shared_only)
         print(f"  + {len(owners)} record artists outside it (their records' credits are in the graph)")
         meta = {"built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 "musicbrainz_dump": dump_url.rsplit("/", 1)[-1], "curated_seeds": str(len(curated)),

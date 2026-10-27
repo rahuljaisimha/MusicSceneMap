@@ -105,7 +105,7 @@ def main():
         print("Install psycopg2: pip install psycopg2-binary")
         sys.exit(1)
     db_url = None if dry_run else get_db_url()
-    artists, relationships, collaborations, curated, concert = mb.load_graph_inputs()
+    artists, relationships, collaborations, shared_only, curated, concert = mb.load_graph_inputs()
     reachable = mb.bfs_reachable(mb.seed_budgets(curated, concert, mb.CONCERTDB_HOPS), relationships, artists)
 
     conn = None
@@ -114,8 +114,10 @@ def main():
         conn = psycopg2.connect(db_url)
 
     # Every genre a seeded artist uses (graph artists and record artists outside it).
-    kept = {k: n for k, n in collaborations.items() if k[0] in reachable}
-    owners = mb.record_artists(collaborations, reachable)
+    owners = mb.record_artists(collaborations, reachable, shared_only)
+    # A pair known only from a shared song credit is kept only when both artists are seeded.
+    kept = {k: n for k, n in collaborations.items()
+            if k[0] in reachable and (k not in shared_only or k[1] in reachable or k[1] in owners)}
     by_gid = {d["gid"]: d for d in artists.values()}
     names = mb.genre_names()
     used = sorted({i for g in reachable | owners if g in by_gid for i in by_gid[g].get("genres") or ()})

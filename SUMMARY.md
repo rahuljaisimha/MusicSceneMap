@@ -255,6 +255,8 @@ scripts/
 
 supabase/
 ├── functions/
+│   ├── user-requested-data/ — Edge function: keeps the data browsers fetched from outside sources (POST { source, data }) for concert-database.
+│   ├── _shared/userRequestedData.ts — Per-source checks of what user-requested-data keeps (Pollstar); tested from src/test.
 │   ├── venue-search/     — Edge function: on-demand venue lookup (artist + city → venues).
 │   │                       Resolves via DB then MusicBrainz. Caches, detects toured_with.
 │   ├── report-miss/      — Edge function: logs artists missing from browser SQLite.
@@ -418,9 +420,15 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 - `search_misses` — query, source, created_at (tracks unknown artist lookups)
 
 **Edge Functions** (`supabase/functions/`):
-- `venue-search` — On-demand venue lookup: resolves artist (DB → MusicBrainz fallback), checks cache, fetches Setlist.fm, stores results, detects touring partners. Adds missing artists to DB automatically.
+- `venue-search` — On-demand venue lookup: resolves artist (DB → MusicBrainz fallback), checks cache, fetches Setlist.fm, stores results, detects touring partners. Adds missing artists to DB automatically. Keeps every setlist it fetches, as setlist.fm returned it, as user-requested data (`user_requested_data`, below).
 - `report-miss` — Lightweight POST endpoint for frontend to report artists missing from browser SQLite.
 - `graph-neighbors` — Tier-2 graph lookup: artist + 1-hop neighbors from Postgres for artists missing from the browser SQLite, and for every lookup while that graph is still downloading. `log=0` skips the miss log. `?q=` is a search mode for the artist dropdowns (ranked matches with disambiguation and area, no neighbors, never logs).
+
+**User-requested data for concert-database** (`user_requested_data`, migration 009: source, key, data JSONB, version, fetched_at, seq; one row per (source, key)). Data the app fetches from outside sources because a user asked for something, kept so concert-database can store it like its own crawls without spending its own requests; nothing kept is about the user:
+- `setlistfm` (key = setlist id): venue-search upserts every setlist it fetches (the artist-in-city search and each venue's setlists) as setlist.fm returned it; version = its lastUpdated.
+- `pollstar` (key = Pollstar venue id): Discover's Concerts hands each freshly fetched venue's upcoming events (not cache hits) to the `user-requested-data` function, which anyone can call, so each source's check in `supabase/functions/_shared/userRequestedData.ts` keeps only what concert-database reads (event id, date, name, pollstar.com url, festival flag, acts with their headliner flag; the venue's id, name, city, state, location) and refuses anything malformed or oversized; version = a hash of what's kept.
+`seq` moves forward only when a row is added or its version changes (trigger). concert-database's `msm-requested` step (a step of every run, same read-only login as the misses) reads the rows past its last `seq` and hands each to its source's ingest. A new source: a check in `BROWSER_SOURCES` (browser-fetched) or an upsert in its edge function, plus an ingest in concert-database.
+
 
 **Search miss tracking** (`search_misses`: query, source). concert-database reads new rows every night
 (`concertdb misses`, read-only role from migration 007), resolves them to MusicBrainz IDs and crawls those
@@ -447,6 +455,7 @@ artists' concerts first, so they join the graph at the next rebuild:
 supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy report-miss --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy graph-neighbors --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
+supabase functions deploy user-requested-data --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
 Run `migrations/004_artist_search.sql` for fast dropdown search (`graph-neighbors` `?q=` works without it, just slower and with no `area`), and re-run `seed_supabase.py` to fill `area`. Run `migrations/005_collaborations.sql`, then `VACUUM FULL relationships;` on its own, before re-seeding with the collaborations model.
 

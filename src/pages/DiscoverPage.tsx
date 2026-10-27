@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { searchVenuesForArtists, searchVenuesByMbid, type VenueResult } from "../api/supabase";
-import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarEvent } from "../api/pollstar";
+import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarEvent, type PollstarVenue } from "../api/pollstar";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { rankConcerts, dedupeEvents, headlineArtist, type RankedConcert } from "./concerts";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
@@ -182,7 +182,7 @@ export function DiscoverPage() {
 
       // 2. Resolve each venue name to a Pollstar venue in the same city.
       const cityLower = cityName.toLowerCase();
-      const pollstarVenueIds = new Map<string, string>(); // id -> name (dedupe)
+      const pollstarVenueIds = new Map<string, PollstarVenue>(); // id -> venue (dedupe)
       for (const name of topVenueNames) {
         try {
           const matches = await pollstarSearchVenues(name);
@@ -191,7 +191,7 @@ export function DiscoverPage() {
           );
           const chosen = inCity ?? matches[0];
           if (chosen && !pollstarVenueIds.has(chosen.id)) {
-            pollstarVenueIds.set(chosen.id, chosen.name);
+            pollstarVenueIds.set(chosen.id, chosen);
           }
         } catch {
           // Skip venues Pollstar can't resolve.
@@ -206,9 +206,9 @@ export function DiscoverPage() {
 
       // 3. Fetch upcoming events for each resolved venue.
       const allEvents: PollstarEvent[] = [];
-      for (const venueId of pollstarVenueIds.keys()) {
+      for (const [venueId, venue] of pollstarVenueIds) {
         try {
-          const events = await getUpcomingEvents(venueId);
+          const events = await getUpcomingEvents(venueId, { venue });
           allEvents.push(...events);
         } catch {
           // Skip venues whose events fail to load.

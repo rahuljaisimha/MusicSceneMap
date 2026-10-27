@@ -176,6 +176,26 @@ async function getCachedVenues(mbid: string, city: string) {
     .sort((a: any, b: any) => b.showCount - a.showCount);
 }
 
+/**
+ * Keep every setlist fetched, as setlist.fm returned it, as user-requested data
+ * (user_requested_data, source "setlistfm", migration 009): concert-database
+ * stores them like its own crawl. Never fails the search.
+ */
+async function keepSetlists(setlists: any[]) {
+  const rows = setlists
+    .filter((s) => s?.id)
+    .map((s) => ({
+      source: "setlistfm",
+      key: String(s.id),
+      data: s,
+      version: s.lastUpdated ?? null,
+      fetched_at: new Date().toISOString(),
+    }));
+  if (rows.length === 0) return;
+  const { error } = await supabase.from("user_requested_data").upsert(rows, { onConflict: "source,key" });
+  if (error) console.error("keeping setlists failed:", error.message);
+}
+
 async function fetchAndStore(mbid: string, city: string) {
   // Fetch from Setlist.fm
   const response = await fetch(
@@ -190,6 +210,7 @@ async function fetchAndStore(mbid: string, city: string) {
 
   const data = await response.json();
   const setlists = data.setlist || [];
+  await keepSetlists(setlists);
 
   // Aggregate venues and track venue+date for toured_with detection
   const venueMap = new Map<string, { venue: any; count: number }>();
@@ -265,6 +286,7 @@ async function fetchAndStore(mbid: string, city: string) {
 
       const venueData = await venueResponse.json();
       const venueSetlists = venueData.setlist || [];
+      await keepSetlists(venueSetlists);
 
       // Find other artists who played at this venue on the same date
       for (const vs of venueSetlists) {

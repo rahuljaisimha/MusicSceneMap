@@ -24,6 +24,7 @@
  */
 
 import { cachedFetch } from "./cache";
+import { keepUserRequestedData } from "./supabase";
 import { debugLog } from "../debug/DebugLog";
 
 const isDev = import.meta.env.DEV;
@@ -217,11 +218,13 @@ export async function searchVenues(query: string): Promise<PollstarVenue[]> {
 
 /**
  * Fetch upcoming events for a venue (from today out to `yearsAhead` years).
- * `fromDate` is always today-or-later (Pollstar gates past dates).
+ * `fromDate` is always today-or-later (Pollstar gates past dates). With
+ * `venue`, a fresh response (not a cached one) is also kept as user-requested
+ * data for concert-database.
  */
 export async function getUpcomingEvents(
   venueId: string,
-  opts: { pageSize?: number; yearsAhead?: number } = {}
+  opts: { pageSize?: number; yearsAhead?: number; venue?: PollstarVenue } = {}
 ): Promise<PollstarEvent[]> {
   const pageSize = opts.pageSize ?? 25;
   const yearsAhead = opts.yearsAhead ?? 4;
@@ -247,6 +250,10 @@ export async function getUpcomingEvents(
       }).toString();
       debugLog.log(`Pollstar events: venue ${venueId} from ${from}`);
       const raw = await pollstarFetch<RawEventsResponse>(eventsUrl(venueId, qs));
+      if (opts.venue) {
+        const { id, name, city, state, location } = opts.venue;
+        keepUserRequestedData("pollstar", { venue: { id, name, city, state, location }, events: raw });
+      }
       const events = parseEvents(raw);
       debugLog.log(`Pollstar: ${events.length} upcoming events for venue ${venueId}`);
       return events;

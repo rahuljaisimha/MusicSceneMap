@@ -1,17 +1,24 @@
 const SUPABASE_FUNCTIONS_URL = "https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1";
 
 /**
- * Hand data fetched from an outside source because the user asked for
- * something (e.g. a Pollstar venue's upcoming events) to the
- * user-requested-data function, which keeps it for concert-database. Nothing
- * in it is about the user. Fire-and-forget, doesn't block the user.
+ * Pollstar's JSON through our pollstar-events function: fetched by our server
+ * and shared by every visitor through a 24-hour cache (and kept for
+ * concert-database). Null when the function can't get it (Pollstar refusing
+ * with nothing cached, or the function unreachable): the caller then asks
+ * Pollstar from the browser.
  */
-export function keepUserRequestedData(source: string, data: unknown): void {
-  fetch(`${SUPABASE_FUNCTIONS_URL}/user-requested-data`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source, data }),
-  }).catch(() => {}); // fire and forget
+export async function pollstarViaServer<T>(params: { search?: string; venue?: string }): Promise<T | null> {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter((e): e is [string, string] => typeof e[1] === "string")
+  );
+  try {
+    const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/pollstar-events?${qs}`);
+    if (!response.ok) return null;
+    const body = (await response.json()) as { data?: T };
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

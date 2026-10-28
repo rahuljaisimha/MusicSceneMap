@@ -9,7 +9,7 @@ The app opens on a **Home** page (no nav bar: a one-line summary and a large but
 ## Tech stack
 
 - Vite + React 18 + TypeScript
-- react-router-dom (HashRouter for GitHub Pages compatibility)
+- react-router-dom (hash routes via createHashRouter, for GitHub Pages compatibility; a data router so links can use view transitions)
 - react-force-graph-2d for graph visualization
 - sql.js (SQLite compiled to WASM) for in-browser graph queries
 - In-memory SceneGraph with localStorage persistence (Explore view)
@@ -189,7 +189,7 @@ src/
 │   ├── types.ts          — Node types, edge types, color maps.
 │   └── SceneGraph.ts     — In-memory graph with dedup/merge, persistence, expanded tracking.
 ├── pages/
-│   ├── HomePage.tsx      — Default page (#/), no nav bar: one-line summary + a large button per page (HOME_LINKS).
+│   ├── HomePage.tsx      — Default page (#/), no nav bar: one-line summary + a large button per page (HOME_LINKS). Going to or from it, the title glides into the nav brand while the bar slides down, both in 0.4 s on one linear() spring curve (a quick ~11% wind-up the other way, a sweep, ~10% overshoot), no page fade (view transitions: `viewTransition` links, `view-transition-name` in index.css; off with reduced motion).
 │   ├── ExplorePage.tsx   — (#/explore) Graph exploration via SQLite. Only person/group nodes. Albums filtered out.
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
@@ -242,7 +242,7 @@ src/
 │   ├── searchResolution.test.ts  — MBID-vs-name search resolution.
 │   ├── artistSuggest.test.ts     — Dropdown suggestion merging and labels.
 │   └── fixtures/         — Captured MusicBrainz API responses (search-fuzz, artist-arctic-monkeys, etc.).
-├── App.tsx               — Router (HashRouter, 6 routes: Home at /, Explore at /explore, Play, Discover, Similarity, About; unknown paths go home).
+├── App.tsx               — Router (createHashRouter, 6 routes: Home at /, Explore at /explore, Play, Discover, Similarity, About; unknown paths go home).
 ├── main.tsx              — Entry point.
 ├── vite-env.d.ts         — Vite type declarations.
 ├── sql.js.d.ts           — sql.js type declarations.

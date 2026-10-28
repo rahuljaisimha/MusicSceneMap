@@ -60,6 +60,55 @@ input {
 .pair-card:not([aria-expanded="true"]):hover { border-color: #444 !important; }
 .pair-card:focus-visible { outline: 2px solid #48dbfb; outline-offset: 2px; }
 
+/* Home <-> the other pages (Links with viewTransition): the home title glides
+   into the nav brand and the nav bar slides down (and back up going home); the
+   rest of the page switches at once (no cross-fade). Browsers without view
+   transitions just switch pages. */
+.home-title { width: fit-content; }
+.home-title,
+.nav-brand { view-transition-name: site-title; }
+.app-nav { view-transition-name: app-nav; }
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 0.3s;
+  animation-timing-function: ease-out;
+}
+::view-transition-old(root),
+::view-transition-new(root) { animation: none; }
+/* The title and the bar move on the same curve over 0.4 s, springy at both
+   ends: a quick wind-up (first 0.1 s: they pull back ~11% the other way), a
+   straight sweep (0.1 s), then they overshoot ~10% and settle (0.2 s).
+   linear() is that curve (a damped spring into a straight sweep into a damped
+   spring); browsers without linear() use the cubic-bezier (a smaller pull-back
+   and overshoot). */
+::view-transition-group(site-title),
+::view-transition-new(app-nav):only-child,
+::view-transition-old(app-nav):only-child {
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.5, -0.35, 0.4, 1.35);
+  animation-timing-function: linear(0, -0.007, -0.013, -0.021, -0.031, -0.043, -0.056, -0.07, -0.083,
+    -0.096, -0.105, -0.109, -0.105, -0.088, -0.054, 0, 0.067, 0.133, 0.2, 0.267, 0.333, 0.4, 0.467,
+    0.533, 0.6, 0.667, 0.733, 0.8, 0.867, 0.933, 1, 1.054, 1.087, 1.103, 1.105, 1.098, 1.086, 1.071,
+    1.056, 1.041, 1.027, 1.016, 1.007, 1, 0.996, 0.993, 0.992, 0.992, 0.992, 0.993, 0.994, 0.995,
+    0.997, 0.998, 0.999, 0.999, 1, 1, 1.001, 1.001, 1);
+}
+/* When the bar swings below its place (overshooting on the way in, winding up
+   on the way out), a strip of its own colour fills the gap above it */
+::view-transition-new(app-nav),
+::view-transition-old(app-nav) { box-shadow: 0 -24px 0 #1a1a1a; }
+/* Above the nav bar: going from home, the bar is new, so it would be painted on top */
+::view-transition-group(site-title) { z-index: 1; }
+::view-transition-new(app-nav):only-child { animation-name: nav-slide-in; }
+::view-transition-old(app-nav):only-child { animation-name: nav-slide-out; }
+@keyframes nav-slide-in { from { transform: translateY(-100%); } }
+@keyframes nav-slide-out { to { transform: translateY(-100%); } }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) { animation: none !important; }
+}
+
 /* Home: page buttons */
 .home-card:hover { border-color: #ff6b6b !important; background: #202020 !important; }
 .home-card:focus-visible { outline: 2px solid #48dbfb; outline-offset: 2px; }

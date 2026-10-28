@@ -31,7 +31,7 @@ or:
 
 # Current Implementation
 
-The app has four features, powered by a precomputed SQLite database (built from MusicBrainz data dumps) queried directly in the browser via WebAssembly. It works on desktop and phones.
+The app opens on a home page with a one-line summary and a large button for each page (the nav bar is on every other page). It has four features, powered by a precomputed SQLite database (built from MusicBrainz data dumps) queried directly in the browser via WebAssembly. It works on desktop and phones.
 
 ## Explore
 

@@ -60,6 +60,10 @@ input {
 .pair-card:not([aria-expanded="true"]):hover { border-color: #444 !important; }
 .pair-card:focus-visible { outline: 2px solid #48dbfb; outline-offset: 2px; }
 
+/* Home: page buttons */
+.home-card:hover { border-color: #ff6b6b !important; background: #202020 !important; }
+.home-card:focus-visible { outline: 2px solid #48dbfb; outline-offset: 2px; }
+
 .game-buttons button:disabled {
   opacity: 0.45;
   cursor: default;
@@ -149,7 +153,17 @@ input {
     min-height: 44px;
   }
 
-  /* Scrollable pages (Play / Discover / About) */
+  /* Home: one full-width button per row */
+  .home-links {
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem !important;
+  }
+  .home-card {
+    min-height: 88px !important;
+    padding: 1rem !important;
+  }
+
+  /* Scrollable pages (Home / Play / Discover / About) */
   .page-container {
     padding: 1rem 1rem max(1.5rem, env(safe-area-inset-bottom)) !important;
   }

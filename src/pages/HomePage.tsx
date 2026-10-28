@@ -13,14 +13,14 @@ export function HomePage() {
   return (
     <div className="page-container" style={styles.container}>
       <div style={styles.content}>
-        <h1 className="page-title" style={styles.title}>MusicSceneMap</h1>
+        <h1 className="page-title home-title" style={styles.title}>MusicSceneMap</h1>
         <p style={styles.summary}>
           MusicSceneMap maps the connections between artists: shared band members, side projects,
           collaborations and tour support.
         </p>
         <nav className="home-links" style={styles.links} aria-label="Pages">
           {HOME_LINKS.map((link) => (
-            <Link key={link.to} to={link.to} className="home-card" style={styles.card}>
+            <Link key={link.to} to={link.to} viewTransition className="home-card" style={styles.card}>
               <span style={styles.cardTitle}>{link.label}</span>
               <span style={styles.cardText}>{link.description}</span>
             </Link>

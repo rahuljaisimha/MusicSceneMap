@@ -4,7 +4,7 @@
 
 A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages and/or Cloudflare (Workers Builds); see `docs/CDN_HOSTING.md`.
 
-Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists with their MusicBrainz disambiguation: "Fuzz (US garage rock band)"; artists MusicBrainz doesn't disambiguate get no label.
+The app opens on a **Home** page (no nav bar: a one-line summary and a large button per page). Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists with their MusicBrainz disambiguation: "Fuzz (US garage rock band)"; artists MusicBrainz doesn't disambiguate get no label.
 
 ## Tech stack
 
@@ -189,7 +189,8 @@ src/
 │   ├── types.ts          — Node types, edge types, color maps.
 │   └── SceneGraph.ts     — In-memory graph with dedup/merge, persistence, expanded tracking.
 ├── pages/
-│   ├── ExplorePage.tsx   — Graph exploration via SQLite. Only person/group nodes. Albums filtered out.
+│   ├── HomePage.tsx      — Default page (#/), no nav bar: one-line summary + a large button per page (HOME_LINKS).
+│   ├── ExplorePage.tsx   — (#/explore) Graph exploration via SQLite. Only person/group nodes. Albums filtered out.
 │   ├── PlayPage.tsx      — Six Degrees game: BFS pathfinding, valid moves list with relationship labels,
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
 │   │                       Supports random, custom (any two connected nodes), and shared (MBID URL) games.
@@ -213,7 +214,7 @@ src/
 ├── components/
 │   ├── ArtistAutocomplete.tsx — Artist input + dropdown (keyboard, ARIA combobox, 44px rows on phones).
 │   │                       Used by SearchBar, Discover, Similarity and Play's custom game.
-│   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links.
+│   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links; the brand links home; hidden on the home page.
 │   │                       Inline tabs on desktop; hamburger menu below 640px.
 │   ├── SearchBar.tsx     — Search input, expand, reset. Responsive layout.
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas (solid=expanded, outline=unexpanded).
@@ -241,7 +242,7 @@ src/
 │   ├── searchResolution.test.ts  — MBID-vs-name search resolution.
 │   ├── artistSuggest.test.ts     — Dropdown suggestion merging and labels.
 │   └── fixtures/         — Captured MusicBrainz API responses (search-fuzz, artist-arctic-monkeys, etc.).
-├── App.tsx               — Router (HashRouter, 5 routes: Explore, Play, Discover, Similarity, About).
+├── App.tsx               — Router (HashRouter, 6 routes: Home at /, Explore at /explore, Play, Discover, Similarity, About; unknown paths go home).
 ├── main.tsx              — Entry point.
 ├── vite-env.d.ts         — Vite type declarations.
 ├── sql.js.d.ts           — sql.js type declarations.

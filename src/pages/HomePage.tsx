@@ -1,0 +1,85 @@
+import { Link } from "react-router-dom";
+
+/** The pages the home screen links to, in nav order. */
+export const HOME_LINKS = [
+  { to: "/explore", label: "Explore", description: "Explore the graph. Search artists and walk through their network." },
+  { to: "/play", label: "Play", description: "Six Degrees of Music: connect two artists through the bands they share, in as few moves as you can." },
+  { to: "/discover", label: "Discover", description: "Find venues and upcoming concerts in a city, ranked by how well they fit the artists you like." },
+  { to: "/similarity", label: "Similarity", description: "Score how close any artist is to a list of artists you love, and see the connections behind the score." },
+  { to: "/about", label: "About", description: "How it works and where the data comes from." },
+];
+
+export function HomePage() {
+  return (
+    <div className="page-container" style={styles.container}>
+      <div style={styles.content}>
+        <h1 className="page-title" style={styles.title}>MusicSceneMap</h1>
+        <p style={styles.summary}>
+          MusicSceneMap maps the connections between artists: shared band members, side projects,
+          collaborations and tour support.
+        </p>
+        <nav className="home-links" style={styles.links} aria-label="Pages">
+          {HOME_LINKS.map((link) => (
+            <Link key={link.to} to={link.to} className="home-card" style={styles.card}>
+              <span style={styles.cardTitle}>{link.label}</span>
+              <span style={styles.cardText}>{link.description}</span>
+            </Link>
+          ))}
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "2.5rem 2rem 2rem",
+    display: "flex",
+    justifyContent: "center",
+  },
+  content: {
+    maxWidth: "760px",
+    width: "100%",
+  },
+  title: {
+    fontSize: "2rem",
+    fontWeight: 700,
+    color: "#ff6b6b",
+    marginBottom: "0.75rem",
+  },
+  summary: {
+    color: "#bbb",
+    fontSize: "1rem",
+    lineHeight: 1.6,
+    marginBottom: "1.75rem",
+  },
+  links: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: "1rem",
+  },
+  card: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.4rem",
+    minHeight: "120px",
+    padding: "1.25rem",
+    background: "#1a1a1a",
+    border: "1px solid #2a2a2a",
+    borderRadius: "10px",
+    textDecoration: "none",
+    transition: "border-color 0.2s, background 0.2s",
+  },
+  cardTitle: {
+    fontSize: "1.25rem",
+    fontWeight: 700,
+    color: "#e0e0e0",
+  },
+  cardText: {
+    fontSize: "0.9rem",
+    lineHeight: 1.5,
+    color: "#999",
+  },
+};

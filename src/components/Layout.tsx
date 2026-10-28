@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 
 const NAV_ITEMS = [
-  { to: "/", label: "Explore" },
+  { to: "/explore", label: "Explore" },
   { to: "/play", label: "Play" },
   { to: "/discover", label: "Discover" },
   { to: "/similarity", label: "Similarity" },
@@ -29,10 +29,13 @@ export function Layout() {
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen]);
 
+  // The home page is its own menu: no nav bar there.
+  if (location.pathname === "/") return <Outlet />;
+
   return (
     <>
       <nav className="app-nav" style={styles.nav}>
-        <span className="nav-brand" style={styles.brand}>MusicSceneMap</span>
+        <Link to="/" className="nav-brand" style={styles.brand} aria-label="MusicSceneMap home">MusicSceneMap</Link>
         {/* Mobile only (see index.css): current tab + hamburger toggle */}
         {current && <span className="nav-current" style={styles.current}>{current.label}</span>}
         <button
@@ -81,6 +84,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "1.1rem",
     color: "#ff6b6b",
     marginRight: "auto",
+    textDecoration: "none",
   },
   current: {
     display: "none",

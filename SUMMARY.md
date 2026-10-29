@@ -142,7 +142,10 @@ Similarity mode (artist-to-scene fit scoring):
           (0.001) so it still shows that pair's closest connection, and searches any pair
           under RECHECK_BELOW (0.05) again from the liked artist's end, keeping the stronger
           path: a search from a hub can use up MAX_EXPANDED before it reaches a small artist
-          (ranking does neither);
+          (ranking does neither). The page runs two passes: a quick one (quick: true, down to
+          QUICK_MIN_STRENGTH 0.05) shows every pair scoring 5+ at once and the rest as 0
+          ("Looking for a connection…"); after it's painted, a closest pass over just those
+          (pendingPairs) fills in their paths and any 2-4 scores (mergePairs);
           at most MAX_EXPANDED (10,000) artists expanded. graphDb.getNeighbors keeps its
           two prepared statements for the search's thousands of calls
         → Overall = best pair + a diminishing bonus for every other pair scoring >= 60

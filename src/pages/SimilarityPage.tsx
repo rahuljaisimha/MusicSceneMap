@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { computeSimilarity, FREE_HOPS, HOP_DAMPING, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
+import { computeSimilarity, FREE_HOPS, HOP_DAMPING, MIN_STRENGTH, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { relationSentence } from "../graph/relationships";
@@ -64,7 +64,7 @@ export function SimilarityPage() {
       // Resolve any artists missing from the core graph via Tier 2/3 first.
       const targetArtist = inputArtist(target, targetPick);
       await tiered.prepareArtists([targetArtist, ...artists]);
-      const res = computeSimilarity(tiered.build(), targetArtist, artists);
+      const res = computeSimilarity(tiered.build(), targetArtist, artists, { closest: true });
       setResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
@@ -240,7 +240,11 @@ function scoreFormula(pair: PairScore): string {
   const extra = Math.max(0, path.length - FREE_HOPS);
   const damping = extra === 0 ? "" : ` × ${HOP_DAMPING}${extra === 1 ? "" : superscript(extra)}`;
   const weights = path.map((s) => s.weight.toFixed(2)).join(" × ");
-  return `${weights}${damping} = ${(pair.strength ?? 0).toFixed(2)} → ${pair.score}`;
+  const strength = pair.strength ?? 0;
+  // Two decimals would read 0.00 for the weakest paths
+  const shown = strength < 0.01 ? strength.toFixed(3) : strength.toFixed(2);
+  const floor = pair.score === 0 ? ` (under ${MIN_STRENGTH} counts as 0)` : "";
+  return `${weights}${damping} = ${shown} → ${pair.score}${floor}`;
 }
 
 /**
@@ -284,7 +288,7 @@ function ConnectionPanel({ pair, result, onClose }: { pair: PairScore; result: S
       <h2 style={styles.panelTitle}>{pair.name} → {result.targetName}</h2>
       <section style={styles.sheetSection}>
         {path == null ? (
-          <p style={styles.sheetMuted}>No path within 6 hops strong enough to score 5 or more.</p>
+          <p style={styles.sheetMuted}>No connection within 6 hops.</p>
         ) : path.length === 0 ? (
           <p style={styles.sheetMuted}>Same artist.</p>
         ) : (

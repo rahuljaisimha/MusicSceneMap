@@ -4,6 +4,8 @@ import {
   aggregateScore,
   strongestPaths,
   connect,
+  PathSearch,
+  scoreArtistsAgainstList,
   pathStrength,
   pathLength,
   HOP_DISTANCE,
@@ -742,3 +744,36 @@ describe("bidirectional search (connect)", () => {
     }
   });
 });
+
+describe("scoring many artists a step at a time", () => {
+  it("finds the same paths in steps as in one go", () => {
+    const g = makeGraph();
+    const start = g.findNodeByName("Ty Segall")!;
+    const targets = new Set(["Mikal Cronin", "Charles Moothart", "Fuzz"].map((n) => g.findNodeByName(n)!.id));
+    const whole = strongestPaths(g, start, targets);
+    const search = new PathSearch(g, start, targets);
+    let steps = 0;
+    while (!search.done && steps < 1000) {
+      search.step(1);
+      steps++;
+    }
+    expect(steps).toBeGreaterThan(1);
+    expect([...search.found.keys()].sort()).toEqual([...whole.keys()].sort());
+    for (const [id, path] of whole) expect(pathStrength(search.found.get(id)!)).toBeCloseTo(pathStrength(path));
+  });
+
+  it("reports each score as soon as it's known, closest first, matching a pair search", async () => {
+    const g = makeGraph();
+    const order: string[] = [];
+    const scores = await scoreArtistsAgainstList(g, ["Mikal Cronin", "Charles Moothart", "Nobody At All"], ["Ty Segall"], undefined, (n) =>
+      order.push(n)
+    );
+    // Not in the graph: right away; then the bandmate (100) before the album credit (14)
+    expect(order).toEqual(["Nobody At All", "Charles Moothart", "Mikal Cronin"]);
+    for (const name of ["Mikal Cronin", "Charles Moothart"]) {
+      expect(scores.get(name)!.score).toBe(computeSimilarity(g, name, ["Ty Segall"]).overallScore);
+    }
+    expect(scores.get("Nobody At All")).toEqual({ score: 0, found: false });
+  });
+});
+

@@ -160,8 +160,11 @@ Discover (upcoming concert recommendations, streamed: concertSearch.ts streamCon
           listed at once, unscored ("scoring")
         → Each page's new headliners are scored together alongside the requests:
           prepareArtists for the ones missing from the browser graph, then
-          scoreArtistsAgainstList (one strongestPaths search from each liked artist to
-          all of them, aggregateScore per headliner; yields to the browser between),
+          scoreArtistsAgainstList (one search from each liked artist to all of them,
+          run SCORE_STEP (400) artists at a time in turn as PathSearch steps, yielding
+          to the browser between; a headliner is scored, aggregateScore, and its
+          concerts move into place as soon as every search has reached it or given
+          up, so the closest matches appear first and the weakest last),
           each headliner once, cached on the page per liked-artist list. The list
           re-sorts after each page (sortConcerts: scored by score then date, then
           unscored by date)

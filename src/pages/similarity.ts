@@ -327,58 +327,96 @@ export function strongestPaths(
   minStrength: number = MIN_STRENGTH,
   stats?: { capped: boolean }
 ): Map<string, PathStep[]> {
-  const maxLength = Math.log(1 / minStrength);
-  const found = new Map<string, PathStep[]>();
-  if (targetIds.has(start.id)) found.set(start.id, []);
-  const remaining = new Set([...targetIds].filter((id) => id !== start.id));
-  if (remaining.size === 0) return found;
+  const search = new PathSearch(graph, start, targetIds, minStrength);
+  search.step();
+  if (stats && search.capped) stats.capped = true;
+  return search.found;
+}
 
-  const dist = new Map<string, number>([[start.id, 0]]);
-  const hops = new Map<string, number>([[start.id, 0]]);
-  const cameFrom = new Map<string, PathStep>();
-  const nodes = new Map<string, SimNode>([[start.id, start]]);
-  const settled = new Set<string>();
-  const heap = new MinHeap();
-  heap.push([0, start.id]);
+/**
+ * strongestPaths that can run a bit at a time: the Dijkstra state is kept
+ * between `step`s, so a caller can stop between them (to let the browser draw,
+ * or to use what's been found so far). Targets are found strongest first.
+ */
+export class PathSearch {
+  /** Targets reached so far, with their path read from `start`. */
+  readonly found = new Map<string, PathStep[]>();
+  /** No more targets will be found: all reached, nothing left to search, or out of budget. */
+  done = false;
+  /** Ran out of MAX_EXPANDED. */
+  capped = false;
+  private readonly maxLength: number;
+  private readonly remaining: Set<string>;
+  private readonly dist: Map<string, number>;
+  private readonly hops: Map<string, number>;
+  private readonly cameFrom = new Map<string, PathStep>();
+  private readonly nodes: Map<string, SimNode>;
+  private readonly settled = new Set<string>();
+  private readonly heap = new MinHeap();
+  private expanded = 0;
 
-  const pathTo = (id: string): PathStep[] => {
+  constructor(
+    private readonly graph: GraphAccess,
+    readonly start: SimNode,
+    targetIds: Set<string>,
+    minStrength: number = MIN_STRENGTH
+  ) {
+    this.maxLength = Math.log(1 / minStrength);
+    if (targetIds.has(start.id)) this.found.set(start.id, []);
+    this.remaining = new Set([...targetIds].filter((id) => id !== start.id));
+    this.dist = new Map([[start.id, 0]]);
+    this.hops = new Map([[start.id, 0]]);
+    this.nodes = new Map([[start.id, start]]);
+    this.heap.push([0, start.id]);
+    this.done = this.remaining.size === 0;
+  }
+
+  private pathTo(id: string): PathStep[] {
     const path: PathStep[] = [];
-    for (let cur = id; cur !== start.id; ) {
-      const step = cameFrom.get(cur)!;
+    for (let cur = id; cur !== this.start.id; ) {
+      const step = this.cameFrom.get(cur)!;
       path.unshift(step);
       cur = step.from.id;
     }
     return path;
-  };
-
-  let expanded = 0;
-  while (heap.size > 0 && remaining.size > 0) {
-    const [d, id] = heap.pop()!;
-    if (settled.has(id) || d > (dist.get(id) ?? Infinity)) continue;
-    settled.add(id);
-    if (remaining.delete(id)) found.set(id, pathTo(id));
-    if (remaining.size === 0) break;
-    if (hops.get(id)! >= MAX_HOPS) continue;
-    if (++expanded > MAX_EXPANDED) {
-      if (stats) stats.capped = true;
-      continue;
-    }
-
-    const from = nodes.get(id)!;
-    for (const neighbor of graph.neighbors(id)) {
-      const { node } = neighbor;
-      if (settled.has(node.id)) continue;
-      const { edge, step } = hop(graph, from, neighbor);
-      const nd = d + edge + (hops.get(id)! + 1 > FREE_HOPS ? HOP_DISTANCE : 0);
-      if (nd > maxLength || nd >= (dist.get(node.id) ?? Infinity)) continue;
-      dist.set(node.id, nd);
-      hops.set(node.id, hops.get(id)! + 1);
-      nodes.set(node.id, node);
-      cameFrom.set(node.id, step);
-      heap.push([nd, node.id]);
-    }
   }
-  return found;
+
+  /** Settle up to `budget` more artists. Returns the targets reached in this step. */
+  step(budget = Infinity): string[] {
+    const reached: string[] = [];
+    const { graph, heap, dist, hops, nodes, settled, remaining } = this;
+    for (let n = 0; n < budget && heap.size > 0 && remaining.size > 0; n++) {
+      const [d, id] = heap.pop()!;
+      if (settled.has(id) || d > (dist.get(id) ?? Infinity)) continue;
+      settled.add(id);
+      if (remaining.delete(id)) {
+        this.found.set(id, this.pathTo(id));
+        reached.push(id);
+      }
+      if (remaining.size === 0) break;
+      if (hops.get(id)! >= MAX_HOPS) continue;
+      if (++this.expanded > MAX_EXPANDED) {
+        this.capped = true;
+        continue;
+      }
+
+      const from = nodes.get(id)!;
+      for (const neighbor of graph.neighbors(id)) {
+        const { node } = neighbor;
+        if (settled.has(node.id)) continue;
+        const { edge, step } = hop(graph, from, neighbor);
+        const nd = d + edge + (hops.get(id)! + 1 > FREE_HOPS ? HOP_DISTANCE : 0);
+        if (nd > this.maxLength || nd >= (dist.get(node.id) ?? Infinity)) continue;
+        dist.set(node.id, nd);
+        hops.set(node.id, hops.get(id)! + 1);
+        nodes.set(node.id, node);
+        this.cameFrom.set(node.id, step);
+        heap.push([nd, node.id]);
+      }
+    }
+    if (heap.size === 0 || remaining.size === 0) this.done = true;
+    return reached;
+  }
 }
 
 /** One hop from `from` to a neighbor: its length (−ln of its damped weight) and the PathStep it makes. */
@@ -589,44 +627,68 @@ export function mergePairs(result: SimilarityResult, updates: PairScore[]): Simi
   return { ...result, overallScore: aggregateScore(pairs), pairs: [...pairs].sort((a, b) => b.score - a.score) };
 }
 
+/** Artists settled per search between pauses in scoreArtistsAgainstList. */
+export const SCORE_STEP = 400;
+
 /**
  * Score many candidate artists against the liked list at once (Discover ranks a
  * page of concerts at a time): one search outward from each liked artist reaches
  * every candidate it can within its budget, instead of a search per candidate.
  * Each candidate combines its pairs like computeSimilarity (aggregateScore). A
  * candidate only reachable past a liked artist's MAX_EXPANDED budget scores 0
- * here, where a pair search (`connect`) might find a weak path. `pause` runs
- * between the searches (to let the browser draw). Keyed by the candidate's name.
+ * here, where a pair search (`connect`) might find a weak path.
+ *
+ * The searches run SCORE_STEP artists at a time in turn, with `pause` between
+ * (to let the browser draw). A candidate is scored as soon as every search has
+ * reached it or given up, and reported through `onScore` then, so the closest
+ * matches come first and the weakest last. Keyed by the candidate's name.
  */
 export async function scoreArtistsAgainstList(
   graph: GraphAccess,
   candidates: ArtistRef[],
   listArtists: ArtistRef[],
-  pause: () => Promise<void> = () => Promise.resolve()
+  pause: () => Promise<void> = () => Promise.resolve(),
+  onScore: (name: string, score: { score: number; found: boolean }) => void = () => {}
 ): Promise<Map<string, { score: number; found: boolean }>> {
   const nodes = candidates.map((c) => resolveArtist(graph, c));
   const ids = new Set(nodes.flatMap((n) => (n ? [n.id] : [])));
-  const searches: Array<Map<string, PathStep[]> | null> = [];
-  for (const liked of listArtists) {
+  const searches = listArtists.map((liked) => {
     const start = resolveArtist(graph, liked);
-    searches.push(start && ids.size > 0 ? strongestPaths(graph, start, ids) : null);
+    return start && ids.size > 0 ? new PathSearch(graph, start, ids) : null;
+  });
+  const scores = new Map<string, { score: number; found: boolean }>();
+  const settle = (name: string, score: { score: number; found: boolean }) => {
+    scores.set(name, score);
+    onScore(name, score);
+  };
+  // Artists the graph doesn't have: 0 straight away
+  candidates.forEach((c, i) => {
+    if (!nodes[i]) settle(refName(c), { score: 0, found: false });
+  });
+  const pending = new Set(candidates.flatMap((_, i) => (nodes[i] ? [i] : [])));
+  const known = (j: number, id: string) => !searches[j] || searches[j]!.done || searches[j]!.found.has(id);
+
+  for (;;) {
+    // Everyone this round settled, best first
+    const ready: Array<{ i: number; score: number }> = [];
+    for (const i of [...pending]) {
+      const node = nodes[i]!;
+      if (!listArtists.every((_, j) => known(j, node.id))) continue;
+      pending.delete(i);
+      const pairs: PairScore[] = listArtists.map((liked, j) => {
+        const search = searches[j];
+        if (!search) return { name: refName(liked), found: false, distance: null, score: 0, path: null };
+        const path = search.found.get(node.id) ?? null;
+        const strength = path ? pathStrength(path) : 0;
+        return { name: refName(liked), found: true, distance: path?.length ?? null, path, strength, score: strengthScore(strength) };
+      });
+      ready.push({ i, score: aggregateScore(pairs) });
+    }
+    for (const { i, score } of ready.sort((a, b) => b.score - a.score)) settle(refName(candidates[i]!), { score, found: true });
+    if (pending.size === 0) break;
+    for (const search of searches) if (search && !search.done) search.step(SCORE_STEP);
     await pause();
   }
-  const scores = new Map<string, { score: number; found: boolean }>();
-  candidates.forEach((c, i) => {
-    const node = nodes[i];
-    if (!node) {
-      scores.set(refName(c), { score: 0, found: false });
-      return;
-    }
-    const pairs: PairScore[] = listArtists.map((liked, j) => {
-      const path = searches[j]?.get(node.id) ?? null;
-      if (!searches[j]) return { name: refName(liked), found: false, distance: null, score: 0, path: null };
-      const strength = path ? pathStrength(path) : 0;
-      return { name: refName(liked), found: true, distance: path?.length ?? null, path, strength, score: strengthScore(strength) };
-    });
-    scores.set(refName(c), { score: aggregateScore(pairs), found: true });
-  });
   return scores;
 }
 

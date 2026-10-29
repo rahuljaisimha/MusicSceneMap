@@ -25,8 +25,15 @@ export interface ConcertSearchDeps {
   findCity(query: string): Promise<PollstarCity | null>;
   /** One page of the city's upcoming concerts, soonest first (paced: Pollstar is rate limited). */
   cityEvents(cityId: string, page: number): Promise<CityEventsPage>;
-  /** Headliners' similarity to the liked artists, keyed by the name as given. */
-  scoreMany(artists: string[]): Promise<Map<string, { score: number; found: boolean }>>;
+  /**
+   * Headliners' similarity to the liked artists, keyed by the name as given. Each
+   * one can be reported through `onScore` as soon as it's known (closest first),
+   * before the whole batch is done.
+   */
+  scoreMany(
+    artists: string[],
+    onScore: (artist: string, score: { score: number; found: boolean }) => void
+  ): Promise<Map<string, { score: number; found: boolean }>>;
 }
 
 export interface ConcertSearchProgress {
@@ -103,14 +110,26 @@ export async function streamConcerts(
       while (batches.length > 0 && !isStopped()) {
         const batch = batches.shift()!;
         scoringNow = batch.length;
-        const results = await deps.scoreMany(batch).catch(() => new Map<string, { score: number; found: boolean }>());
+        // Each headliner's concerts move into place as soon as its score is known
+        const apply = (name: string, s: { score: number; found: boolean }) => {
+          const key = name.toLowerCase();
+          if (scores.has(key)) return;
+          scores.set(key, s);
+          scoringNow = Math.max(0, scoringNow - 1);
+          for (const [id, c] of concerts) {
+            if (!c.scored && c.artistName.toLowerCase() === key) {
+              concerts.set(id, { ...c, scored: true, score: s.score, artistFound: s.found });
+            }
+          }
+          emit();
+        };
+        const results = await deps
+          .scoreMany(batch, (name, s) => {
+            if (!isStopped()) apply(name, s);
+          })
+          .catch(() => new Map<string, { score: number; found: boolean }>());
+        for (const name of batch) apply(name, results.get(name) ?? { score: 0, found: false });
         scoringNow = 0;
-        for (const name of batch) scores.set(name.toLowerCase(), results.get(name) ?? { score: 0, found: false });
-        for (const [id, c] of concerts) {
-          const s = !c.scored ? scores.get(c.artistName.toLowerCase()) : undefined;
-          if (s) concerts.set(id, { ...c, scored: true, score: s.score, artistFound: s.found });
-        }
-        emit();
       }
     })().finally(() => {
       pumping = null;

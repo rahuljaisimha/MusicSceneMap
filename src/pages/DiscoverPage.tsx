@@ -76,21 +76,25 @@ export function DiscoverPage() {
           cityEvents: (cityId, page) => getCityEvents(cityId, page, dates),
           // A page's headliners together: those missing from the browser graph are
           // fetched at once, then one search from each liked artist scores them all.
-          scoreMany: async (headliners) => {
+          // Each score is reported as soon as it's known, closest matches first.
+          scoreMany: async (headliners, onScore) => {
             const scores = new Map<string, { score: number; found: boolean }>();
             const todo = headliners.filter((h) => {
               const cached = scoreCache.current.get(`${liked}|${h.toLowerCase()}`);
-              if (cached) scores.set(h, cached);
+              if (cached) {
+                scores.set(h, cached);
+                onScore(h, cached);
+              }
               return !cached;
             });
             if (todo.length === 0) return scores;
             await tiered.prepareArtists(todo);
             await yieldToBrowser();
-            const fresh = await scoreArtistsAgainstList(tiered.build(), todo, artists, yieldToBrowser);
-            for (const [h, s] of fresh) {
+            await scoreArtistsAgainstList(tiered.build(), todo, artists, yieldToBrowser, (h, s) => {
               scores.set(h, s);
               scoreCache.current.set(`${liked}|${h.toLowerCase()}`, s);
-            }
+              onScore(h, s);
+            });
             return scores;
           },
         },

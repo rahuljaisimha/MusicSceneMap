@@ -9,8 +9,7 @@
  * (Explore logs an artist the local graph lacks itself).
  *
  * Remote answers are an artist plus its 1-hop neighbors (artists only, no
- * albums), which is all Explore expansion and Discover's related-band search
- * need. Results are memoized for the session.
+ * albums), which is all Explore expansion needs. Results are memoized for the session.
  */
 
 import { findNodeByName, findNodeById, getNeighbors, searchNodes, isDbLoaded, type NodeRecord } from "./graphDb";

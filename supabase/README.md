@@ -58,6 +58,22 @@ GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/venue-search
 
 ---
 
+## pollstar-city
+
+Discover's Pollstar data, fetched server-side and shared by every visitor through a 24-hour cache (`user_requested_data`, also read by concert-database). Replaces `pollstar-events` (venue by venue), which stays deployed, unused, until it's deleted.
+
+```
+GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/pollstar-city?search=Berlin
+GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/pollstar-city?city=65443&page=0
+```
+
+| Query | Returns | Cached as |
+|-------|---------|-----------|
+| `search=<city name>` | Pollstar's autocomplete (cities, venues, artists...) | `pollstar_search`, key = lowercased search |
+| `city=<id>&page=<n>` | page `n` (0–49) of the city's upcoming events, 100 a page, soonest first, today to 4 years out | `pollstar_city`, key = `<id>:<page>` |
+
+Response: `{ source: "cache" | "pollstar" | "stale", fetchedAt, data }` (data is Pollstar's JSON; past events are dropped from a cached page). `503 { unavailable: true }` when Pollstar refuses and nothing is cached.
+
 ## report-miss
 
 Lightweight endpoint for the frontend to report artists missing from the browser SQLite.
@@ -169,6 +185,7 @@ supabase secrets set SETLISTFM_API_KEY=your-key --project-ref lwqkjtzqjgacgvfjiy
 supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy report-miss --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy graph-neighbors --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
+supabase functions deploy pollstar-city --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
 
 ## Migrations

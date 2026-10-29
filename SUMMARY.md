@@ -4,7 +4,7 @@
 
 A React app that visualizes music scene connections and includes a "Six Degrees of Music" game. Uses a precomputed SQLite database (from MusicBrainz data dumps) queried in the browser via WebAssembly. Deployed as a static site on GitHub Pages and/or Cloudflare (Workers Builds); see `docs/CDN_HOSTING.md`.
 
-The app opens on a **Home** page (no nav bar: a one-line summary and a large button per page). Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (venue + concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover has a Venues/Concerts toggle — concerts are upcoming Pollstar events ranked by artist similarity. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists with their MusicBrainz disambiguation: "Fuzz (US garage rock band)"; artists MusicBrainz doesn't disambiguate get no label.
+The app opens on a **Home** page (no nav bar: a one-line summary and a large button per page). Features: **Explore** (graph visualization), **Play** (Six Degrees game), **Discover** (upcoming concert recommendations), and **Similarity** (score how closely an artist fits a set of artists you like, using weighted graph relationships). Discover lists upcoming Pollstar concerts at the city's top venues, streamed in as they're found and ranked by headliner similarity. Every artist input (Explore search, Discover/Similarity lists, Play's custom game) has a search-as-you-type dropdown that labels same-name artists with their MusicBrainz disambiguation: "Fuzz (US garage rock band)"; artists MusicBrainz doesn't disambiguate get no label.
 
 ## Tech stack
 
@@ -49,7 +49,7 @@ App loading (lazy, non-blocking):
     browser graph had to leave out to fit its size budget):
         → src/db/graphSource.ts: findArtist / findArtistById / getArtistNeighbors
           call the graph-neighbors edge function with log=0 (no search_misses rows)
-        → Explore search, Discover's related-band BFS, Similarity and Concerts
+        → Explore search, Similarity and Discover
           (via tieredGraphAccess) all work while the download is in progress
         → Play renders at once: a saved game shows in full (only its moves list
           waits), a shared link shows curated start/end names, and a new random
@@ -75,7 +75,7 @@ Artist dropdown (ArtistAutocomplete, all artist inputs):
           Discover/Similarity keep picks as PickedArtist (pickedArtists.ts); the scorer
           takes ArtistRef (name or {name, id}) and GraphAccess.findNodeById; the tiered
           access fetches a pick from Postgres/MusicBrainz by MBID; Discover's venue search
-          and related-group BFS start from the MBID. Typed-and-added names still go by name
+          starts from the MBID. Typed-and-added names still go by name
 
 Explore mode:
     User searches artist (or picks from the dropdown)
@@ -100,17 +100,6 @@ Game mode (Six Degrees of Music):
     Custom game → user picks any two connected artists/bands (no same-type requirement)
     Shared game → URL params (?start=<mbid>&end=<mbid>) load the exact same puzzle;
                   Share button copies an MBID-based link (avoids name ambiguity)
-
-Discover mode (venue recommendations):
-    User enters city + list of artists
-        → Phase 1: calls Supabase edge function for each artist (immediate results)
-            → Edge function resolves artist (DB → MusicBrainz fallback → adds if new)
-            → Checks cache (14-day stale threshold), falls back to Setlist.fm API
-            → Stores venues + played_at relationships + toured_with
-        → Phase 2: BFS in browser SQLite finds up to 5 connected bands
-            → Reports artists missing from SQLite via report-miss function
-            → Fetches their venues by MBID in background, merges into results
-        → Venues ranked by total show count across all queried artists
 
 Similarity mode (artist-to-scene fit scoring):
     User enters a list of artists + one target artist to compare
@@ -159,18 +148,29 @@ Similarity mode (artist-to-scene fit scoring):
           with each hop's weight, and the product that makes the score
           ("1.00 × 0.45 × 0.9 = 0.41 → 41")
 
-Discover — Concerts mode (upcoming event recommendations):
-    User toggles to "Concerts", enters city + artists
-        → Runs the venue search to get the city's top venue NAMES
-        → Resolves each to a Pollstar venue via autocomplete (matches city)
-        → Fetches upcoming events per venue from Pollstar (fromDate = today)
-        → Ranks each concert by headline-artist similarity to the list (similarity.ts)
+Discover (upcoming concert recommendations, streamed: concertSearch.ts streamConcerts):
+    User enters city + artists, presses Find Concerts
+        → Pollstar autocomplete for the city name (one request): pickCity takes an exact
+          "City, State" match, else the most prominent city of that name ("Berlin" →
+          Berlin, Germany over Berlin, MD)
+        → The city's upcoming events, CITY_PAGE_SIZE (100) a page, soonest first, today
+          to 4 years out, at most MAX_CITY_PAGES (10) pages; each page's concerts are
+          listed at once, unscored ("scoring")
+        → Each page's new headliners are scored together alongside the requests:
+          prepareArtists for the ones missing from the browser graph, then
+          scoreArtistsAgainstList (one strongestPaths search from each liked artist to
+          all of them, aggregateScore per headliner; yields to the browser between),
+          each headliner once, cached on the page per liked-artist list. The list
+          re-sorts after each page (sortConcerts: scored by score then date, then
+          unscored by date)
+        → A spinner + status line ("Berlin, Germany: 300 of 592 concerts · scoring 64
+          artists…"); Stop (or a new search, or leaving the page) ends the run
         → Artists not in the graph score 0, shown but ranked last (flagged)
-        → Pollstar calls go to the pollstar-events function: fetched server-side,
+        → Pollstar calls go to the pollstar-city function only: fetched server-side,
           24h cache in Postgres shared by every visitor (plus the browser's own 24h
-          localStorage cache). Only if it can't get the data (Pollstar refusing,
-          nothing cached) does the browser ask Pollstar: ~1 req/sec pacing, CORS via
-          Vite dev proxy / corsproxy.io in prod.
+          localStorage cache). The browser never calls Pollstar; when the function
+          can't get the data (Pollstar refusing, nothing cached) the search fails
+          ("Pollstar is unavailable right now")
 
 ```
 
@@ -203,9 +203,10 @@ src/
 │   │                       undo, sorted by rel_type priority, par scoring, reveal shortest path.
 │   │                       Supports random, custom (any two connected nodes), and shared (MBID URL) games.
 │   │                       Renders before the graph downloads (skeleton start/end/par/moves until known).
-│   ├── DiscoverPage.tsx  — Venue + concert recommendations. Venues/Concerts toggle. Venues: city + artists
-│   │                       → venues (progressive BFS). Concerts: top venues → Pollstar upcoming events,
-│   │                       ranked by headline-artist similarity (similarity.ts).
+│   ├── DiscoverPage.tsx  — Upcoming concerts: city + artists → the Pollstar city's upcoming events,
+│   │                       streamed in a page at a time and ranked by headline-artist similarity;
+│   │                       spinner, status, Stop.
+│   ├── concertSearch.ts  — streamConcerts: the Discover search as a stream of updates (deps injected).
 │   ├── SimilarityPage.tsx — Similarity Score: list of artists + target artist → 0–100 fit score.
 │   │                       Wires graphDb into the similarity.ts GraphAccess; renders weighted breakdown.
 │   ├── similarity.ts     — Pure scoring logic (GraphAccess interface, testable without sql.js).
@@ -233,9 +234,9 @@ src/
 │   │                       once the graph has loaded) and a link to the artist's MusicBrainz page.
 │   └── DebugConsole.tsx  — Collapsible log console, shown when the URL has ?debug=1 or ?debug=true.
 ├── api/
-│   ├── supabase.ts       — Client for Supabase edge functions (venue search, aggregation).
-│   ├── pollstar.ts       — Browser Pollstar client: venue autocomplete + upcoming events.
-│   │                       ~1 req/sec pacing (first fires ASAP), 24h cache, CORS via proxy.
+│   ├── supabase.ts       — Client for Supabase edge functions (Pollstar via our server, graph lookups, misses).
+│   ├── pollstar.ts       — Pollstar client: city autocomplete + a city's upcoming events,
+│   │                       via the pollstar-city function only (no browser fallback), 24h cache.
 │   ├── musicbrainz.ts    — Live MusicBrainz API client (1 req/sec). Fallback only: Tier-3 lookups and
 │   │                       dropdown suggestions the database has no match for (searchArtistsPrefix).
 │   └── cache.ts          — localStorage request cache with TTL (used by pollstar.ts, 24h).
@@ -269,7 +270,10 @@ scripts/
 
 supabase/
 ├── functions/
-│   ├── pollstar-events/  — Edge function: Pollstar venue search + upcoming events, fetched server-side, 24h cache shared by all visitors.
+│   ├── pollstar-city/    — Edge function: Pollstar autocomplete + a city's upcoming events by page, fetched
+│   │                       server-side, 24h cache shared by all visitors. Discover uses it.
+│   ├── pollstar-events/  — Edge function (old, unused since pollstar-city; to delete): Pollstar venue
+│   │                       search + a venue's upcoming events.
 │   ├── venue-search/     — Edge function: on-demand venue lookup (artist + city → venues).
 │   │                       Resolves via DB then MusicBrainz. Caches, detects toured_with.
 │   ├── report-miss/      — Edge function: logs artists missing from browser SQLite.
@@ -348,21 +352,21 @@ CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (
 ## Key design decisions
 
 - **SQLite in browser**: Precomputed graph loaded via sql.js WASM. ~49MB download (gzipped, kept under 74MB; loaded in the background), instant queries.
-- **Lazy graph loading**: Pages never wait for the graph download. It starts in the background after the first render (`preloadDb()` in `main.tsx`), and until it finishes `graphSource.ts` and the tiered access answer from Postgres `graph-neighbors`, which holds every artist. After it finishes they still ask Postgres for an artist the browser graph doesn't have (it's cut to fit the download), so Explore and Discover find e.g. Zach Bryan whether or not the download has finished. Those requests pass `log=0`, and Discover's `sqlite-missing` report only runs when the lookup was checked against the local graph, so nothing is added to `search_misses` while the graph is downloading. Postgres only returns 1-hop neighborhoods, so Similarity scores computed before the download finishes can be less precise. Play renders immediately too: a saved game (or a reload of one) shows its start, end and path at once, a shared link shows the start and end when they are curated artists, and everything else (a new random game's artists, the par, the list of moves) shows as placeholders until the graph is in, since picking a game and listing moves need the whole graph.
+- **Lazy graph loading**: Pages never wait for the graph download. It starts in the background after the first render (`preloadDb()` in `main.tsx`), and until it finishes `graphSource.ts` and the tiered access answer from Postgres `graph-neighbors`, which holds every artist. After it finishes they still ask Postgres for an artist the browser graph doesn't have (it's cut to fit the download), so Explore and Discover find e.g. Zach Bryan whether or not the download has finished. Those requests pass `log=0`, so nothing is added to `search_misses` while the graph is downloading. Postgres only returns 1-hop neighborhoods, so Similarity scores computed before the download finishes can be less precise. Play renders immediately too: a saved game (or a reload of one) shows its start, end and path at once, a shared link shows the start and end when they are curated artists, and everything else (a new random game's artists, the par, the list of moves) shows as placeholders until the graph is in, since picking a game and listing moves need the whole graph.
 - **Gzip auto-detection**: Checks first 2 bytes for gzip magic number (1f 8b). Decompresses manually if browser didn't (GitHub Pages). Skips if Vite already decompressed (Content-Encoding: gzip).
 - **Game restricted to band relationships**: BFS and valid moves only use member_of, former_member_of, support_musician. Collaborations and opened_for are not used in gameplay (too loose a tie for the puzzle).
 - **Compilation filter (runtime)**: Album nodes with >25 connections skipped during BFS. A no-op now that graphs have no album nodes; kept for older graph files.
 - **Membership deduplication**: For same (person, band) pair, if ANY relationship is not ended → stored as member_of (not former). Prevents Dave Grohl showing as "former member" of Foo Fighters.
 - **Explore only shows artists**: Album nodes (only in old graph files) filtered from search results and neighbor expansion. Directed edges (opened_for, collaborated_with, produced_for) are drawn source → target whichever end was expanded.
 - **Artist dropdown: database first, MusicBrainz as fallback only**: ~1,500 names in the graph belong to more than one artist (four "Fuzz"es), so suggestions carry a MusicBrainz-style parenthetical from the database's `disambiguation` and `area` (both pipelines now write them; Postgres already has `disambiguation`). Suggestions come from the local graph, else Postgres via `graph-neighbors`' `?q=` search mode (which never logs misses; it shares the function with the `log=0` lookups rather than adding a second one); MusicBrainz is asked only when the database has no match or is unreachable. Only graph artists are suggested once the graph has loaded and matches, so every pick can be expanded. Genre is only shown for MusicBrainz fallback results (tags aren't in the main dump).
-- **Concert recommendations (Pollstar, on demand)**: Discover's Concerts fetches upcoming events when asked, through the `pollstar-events` function: our server asks Pollstar and keeps the answer 24 hours in Postgres, shared by every visitor, so a venue costs at most one Pollstar request a day and there's no scrape job to maintain. (Before, every browser asked Pollstar through corsproxy.io, whose shared servers Pollstar saw anyway; that path remains the fallback when the function can't get the data, paced ~1 req/sec with a realistic UA.) Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
+- **Concert recommendations (Pollstar, on demand)**: Discover fetches upcoming events when asked, through the `pollstar-city` function: our server asks Pollstar and keeps the answer 24 hours in Postgres, shared by every visitor, so a page of a city's concerts costs at most one Pollstar request a day and there's no scrape job to maintain. (Before, every browser asked Pollstar through corsproxy.io, whose shared servers Pollstar saw anyway. That fallback is gone: corsproxy.io now wants an API key, so when the function can't get the data the search fails.) Concerts are ranked by headline-artist similarity reusing `similarity.ts` via a shared `graphAccess.ts` adapter. Artists absent from the graph score 0 and rank last (shown, flagged) — hit rate is a known future improvement (more graph artists / backend fallback). Ranking logic (`concerts.ts`) is pure and unit-tested; only the fetch layer touches the network.
 - **Tiered graph coverage (Option 4)**: `src/pages/tieredGraphAccess.ts` wraps the core sql.js `GraphAccess` and, for artists NOT in the core graph, falls back through Tier 2 (Postgres `graph-neighbors` edge function) → Tier 3 (MusicBrainz live). (Discogs is a planned Tier 4, deferred.) Because the scorer's `GraphAccess` is synchronous but Tier 2/3 are async, it works in two phases: `prepareArtists(names)` (async prefetch of out-of-core artists → node + 1-hop neighbors, cached 24h, concurrent dupes deduped/shared) then `build()` returns a sync facade (core first, then overlay). Similarity and Concerts call `prepareArtists` before scoring, so out-of-core artists (esp. small concert headliners) now resolve instead of scoring 0. Tier 2 returns 1 hop only — reduced multi-hop accuracy for out-of-core artists is an accepted tradeoff. Postgres holds every artist the build reaches, never cut for size (plus the artists of records they worked on), so it covers what the browser graph leaves out when the size budget trims it; MusicBrainz (Tier 3) covers the rest.
 - **Collaborations instead of albums**: a producer, vocal, instrument or performer credit on another artist's record becomes one directed edge from the credited artist to the record's (release group's) first credited artist: `produced_for` for producing, `collaborated_with` for singing/playing/performing (Josh Homme → Arctic Monkeys for Humbug). Engineering credits (mix, engineer, recording), credits on an artist's own records, credits between a band and its current or former members (the membership edge already covers them) and "Various Artists" compilations are left out. Postgres keeps the number of song credits in `relationships.count`; the browser graph has no count column. No album nodes or album table anywhere (it replaced person↔person `collaborator` co-credit pairs, about half as many edges). A song credited to several artists ("Evan Honer & Wyatt Flores") also counts as a `collaborated_with` credit from each of the other artists to the first-credited one, even without a vocal or instrument credit; a song the same artist already has a performing credit on isn't counted twice (parse_shared_credits / parse_shared_songs read `artist_credit_name` and `recording`). A pair known only from a shared song doesn't bring a new artist into the graph (record_artists skips it): those pairs outnumber all other collaborations about two to one, and letting them add artists pushed graph.db.gz to ~103 MB; their edges are kept when both artists are in the graph anyway. Weights (placeholders): `collaborated_with` 0.5, `produced_for` 0.45.
 - **Seeds and size budget**: the graph is every artist within 6 hops of the curated seeds and within `CONCERTDB_HOPS` (default 6) of each artist with a concert in concert-database, over band relationships, plus the artists whose records those artists played on or produced (`record_artists`, ~28k: e.g. Zach Bryan, reached only through the musicians on his records; Postgres always had them). The browser download is held under 74 MB (60.5 MB with the record artists, 48 MB without): if `graph.db.gz` comes out over `MAX_GZIP_MB` (74), `process_mb_dump.py` rebuilds it with one hop fewer around concert-database's artists. The limit can be generous because the download never blocks a page (lazy loading, Postgres answers meanwhile). Postgres is never cut, so Tier 2 covers what the browser graph leaves out. `graph_meta` records the hops used and the number of record artists.
 - **Game valid moves**: Scrollable list of all valid connections from current node. Sorted by relationship priority (members → former → support). Filter by typing. No revisiting. Undo support.
 - **Par scoring**: Par = shortest path node count. Re-rolls if < 3 hops.
 - **Seed artists**: 148 recognizable artists (persons + iconic bands) at 6 hops, the game's puzzle endpoints; plus concert-database's artists (see "Seeds and size budget"). Listed once, in `src/game/artists.ts`, by MusicBrainz ID with the name for readability: names are ambiguous (several "Lemmy"s, five "Nirvana"s) or change ("Kanye West" is "Ye" on MusicBrainz), and the build used to pick an arbitrary namesake. The game resolves them by ID too; a seed missing from the dump is reported by the build.
-- **Concert ties from concert-database**: `scripts/add_concertdb_edges.py` reads the concert-database ledger (read-only; data flows one way, concert-database never reads the graph) and adds one `opened_for` edge per (opener, headliner) pair: both matched to MusicBrainz, not a festival, not cancelled, billing confidence ≥ 0.4. Every act in these pairs has a concert, so the build's concert-database seeds already put it in the graph; an act missing from an older or trimmed graph is added as a node (name, type, disambiguation; no area). `graphDb.getNeighbors` reports each edge's direction (`outgoing`) so Explore draws opener → headliner; Similarity weighs `opened_for` at 0.45 (placeholder, below band ties, above a single album credit) and labels "opened for / headlined". The game and Discover's related-band BFS ignore it (they use band relationships only). Postgres (`graph-neighbors`) doesn't have these edges yet.
+- **Concert ties from concert-database**: `scripts/add_concertdb_edges.py` reads the concert-database ledger (read-only; data flows one way, concert-database never reads the graph) and adds one `opened_for` edge per (opener, headliner) pair: both matched to MusicBrainz, not a festival, not cancelled, billing confidence ≥ 0.4. Every act in these pairs has a concert, so the build's concert-database seeds already put it in the graph; an act missing from an older or trimmed graph is added as a node (name, type, disambiguation; no area). `graphDb.getNeighbors` reports each edge's direction (`outgoing`) so Explore draws opener → headliner; Similarity weighs `opened_for` at 0.45 (placeholder, below band ties, above a single album credit) and labels "opened for / headlined". The game ignores it (it uses band relationships only). Postgres (`graph-neighbors`) doesn't have these edges yet.
 - **Same-type pairs**: Game always pairs person↔person or group↔group.
 - **Vite base (host-aware)**: `vite.config.ts` sets `base` by precedence: explicit `DEPLOY_BASE` env var → Cloudflare build (`WORKERS_CI` from Workers Builds, or `CF_PAGES` from Pages) → `/` → GitHub Pages production default `/MusicSceneMap/` → dev `/`. Cloudflare serves at the domain root, so the GitHub Pages base there causes a blank page (404'd assets) — hence the auto-detection. It also inlines the R2 graph URL on Cloudflare builds (see `__GRAPH_DB_CDN_URL__`), since static-assets-only Workers can't hold env vars.
 - **graph.db.gz loader (local-first, CDN fallback)**: `graphDb.ts` tries the same-origin committed file first, then falls back to the CDN URL (`VITE_GRAPH_DB_URL` or the build-time `__GRAPH_DB_CDN_URL__`) if the local file is missing/HTML-fallback. On Cloudflare the local file is excluded from upload via `public/.assetsignore` (25 MiB asset cap), so it loads from R2.
@@ -439,7 +443,8 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 
 **User-requested data for concert-database** (`user_requested_data`, migration 009: source, key, data JSONB, version, fetched_at, seq; one row per (source, key)). Data the app fetches from outside sources because a user asked for something, kept so concert-database can store it like its own crawls without spending its own requests; nothing kept is about the user:
 - `setlistfm` (key = setlist id): venue-search upserts every setlist it fetches (the artist-in-city search and each venue's setlists) as setlist.fm returned it; version = its lastUpdated.
-- `pollstar` (key = Pollstar venue id; data = { venue, ...Pollstar's events response }) and `pollstar_search` (key = the lowercased venue search; Pollstar's autocomplete response): written by the `pollstar-events` function, which fetches Pollstar server-side for Discover's Concerts and serves every visitor from these rows while they're under 24 hours old (a venue is fetched from Pollstar at most once a day, whoever asks). When Pollstar refuses, an older row is served as stale; with nothing cached the function answers 503 and the browser falls back to Pollstar through corsproxy.io. The venue's name and city come from the cached search that found it, so nothing a browser sends is stored. (Migration 009's comments still describe the earlier browser-post design, replaced before it shipped.)
+- `pollstar` (key = Pollstar venue id; data = { venue, ...Pollstar's events response }) and `pollstar_search` (key = the lowercased venue search; Pollstar's autocomplete response): written by the `pollstar-events` function (Discover's old venue-by-venue search; `pollstar_search` rows are now written by `pollstar-city` too), which fetched Pollstar server-side for Discover's Concerts and serves every visitor from these rows while they're under 24 hours old (a venue is fetched from Pollstar at most once a day, whoever asks). When Pollstar refuses, an older row is served as stale; with nothing cached the function answers 503. The venue's name and city come from the cached search that found it, so nothing a browser sends is stored. (Migration 009's comments still describe the earlier browser-post design, replaced before it shipped.)
+- `pollstar_city` (key = "<Pollstar city id>:<page>"; Pollstar's response for that page of the city's upcoming events, 100 a page, each event with its full venue): written by the `pollstar-city` function, same 24-hour cache and stale/503 rules. concert-database has no ingest for it yet.
 `seq` moves forward only when a row is added or its version changes (trigger). concert-database's `msm-requested` step (a step of every run, same read-only login as the misses) reads the rows past its last `seq` and hands each to its source's ingest. A new source: an upsert in the edge function that fetches it, plus an ingest in concert-database (rows from sources it has no ingest for are skipped).
 
 
@@ -449,7 +454,7 @@ artists' concerts first, so they join the graph at the next rebuild:
 - `dropdown-musicbrainz-pick` — the user picked an artist only MusicBrainz knows (query = its MBID)
 - `explore-not-found` — an Explore search found the artist nowhere: not in the loaded graph nor on the server (query = MBID or typed name)
 - `explore-not-in-graph` — an Explore search found the artist on the server but not in the loaded browser graph (query = MBID)
-- `sqlite-missing` — in Supabase DB but not browser SQLite (frontend reports via report-miss)
+- `sqlite-missing` — in Supabase DB but not browser SQLite (reported by the old Discover venue search; no longer sent)
 - `venue-search-missing-artist` — resolved via MusicBrainz, added to Supabase (edge function logs)
 - `venue-search-not-found` — not found anywhere, likely mistype (edge function logs)
 
@@ -468,7 +473,7 @@ artists' concerts first, so they join the graph at the next rebuild:
 supabase functions deploy venue-search --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy report-miss --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 supabase functions deploy graph-neighbors --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
-supabase functions deploy pollstar-events --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
+supabase functions deploy pollstar-city --no-verify-jwt --project-ref lwqkjtzqjgacgvfjiyxg
 ```
 Run `migrations/004_artist_search.sql` for fast dropdown search (`graph-neighbors` `?q=` works without it, just slower and with no `area`), and re-run `seed_supabase.py` to fill `area`. Run `migrations/005_collaborations.sql`, then `VACUUM FULL relationships;` on its own, before re-seeding with the collaborations model.
 
@@ -490,7 +495,7 @@ Run `migrations/004_artist_search.sql` for fast dropdown search (`graph-neighbor
   - **JamBase** — excellent fit (MBID-keyed via `/v3/artists/id/musicbrainz:{mbid}`, aggregates 25+ ticketing sources, structured data), but only a 14-day free trial then paid.
   - **Ticketmaster Discovery API** — free, but only lists LiveNation/Ticketmaster events (limited coverage).
   - **Songkick API** with MBID support (`/artists/mbid:{mbid}/calendar`) would be ideal but is paid-only.
-  - **Pollstar (IMPLEMENTED)** — Pollstar's website backs onto public JSON endpoints that return genuine *upcoming* events with artist names, dates, and ticket links: autocomplete (`autocomplete.pollstar.com/global/All/100/{q}`, filter EntityType=Venue) and events (`www.pollstar.com/api/companies/{venueId}/events?fromDate=...`). `fromDate` must be today-or-later (past dates are subscription-gated). This powers the Discover → Concerts toggle: top venues → Pollstar events → ranked by headline-artist similarity. Fetched in-browser (CORS via proxy), ~1 req/sec, 24h cache. Artists not in the graph score 0 and rank last. See `src/api/pollstar.ts` + `src/pages/concerts.ts`.
+  - **Pollstar (IMPLEMENTED)** — Pollstar's website backs onto public JSON endpoints that return genuine *upcoming* events with artist names, dates, and ticket links: autocomplete (`autocomplete.pollstar.com/global/All/100/{q}`, filter EntityType=Venue) and events (`www.pollstar.com/api/companies/{venueId}/events?fromDate=...`). `fromDate` must be today-or-later (past dates are subscription-gated). This powers the Discover → Concerts toggle: top venues → Pollstar events → ranked by headline-artist similarity. Fetched server-side by the pollstar-city function, 24h shared cache (the browser never calls Pollstar). Artists not in the graph score 0 and rank last. See `src/api/pollstar.ts` + `src/pages/concerts.ts`.
   - **Original decision (superseded)**: Parked pending a free MBID-compatible source; Pollstar's public endpoints filled that gap.
   - **Future hit-rate improvements**: more artists in the SQLite graph, a backend fallback lookup when an artist isn't in the graph, or MBID resolution via MusicBrainz to enrich matching.
 - **Setlist.fm integration**: Venue data, touring-together inference via shared date+venue.

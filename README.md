@@ -45,9 +45,7 @@ A game that gives you two musicians (or two groups) and challenges you to find t
 
 ## Discover
 
-Find venues in any city based on artists you like. Enter a city and a list of artists — the app finds venues where they've performed, then expands to related groups for richer recommendations. Powered by Setlist.fm data, cached in a backend database.
-
-Switch to **Concerts** to see upcoming shows at the city's top venues (from Pollstar), ranked by how well each headliner fits the artists you listed.
+Find upcoming concerts in any city, ranked by how well each headliner fits the artists you like. Enter a city and a list of artists: the app finds the city on Pollstar and loads its upcoming shows 100 at a time, soonest first (up to the first 1,000; Pollstar is rate limited). Concerts appear as soon as each page arrives and move into place as their headliners are scored; a spinner shows the search is still going, and **Stop** ends it with what it has so far.
 
 ## Similarity
 

@@ -590,6 +590,47 @@ export function mergePairs(result: SimilarityResult, updates: PairScore[]): Simi
 }
 
 /**
+ * Score many candidate artists against the liked list at once (Discover ranks a
+ * page of concerts at a time): one search outward from each liked artist reaches
+ * every candidate it can within its budget, instead of a search per candidate.
+ * Each candidate combines its pairs like computeSimilarity (aggregateScore). A
+ * candidate only reachable past a liked artist's MAX_EXPANDED budget scores 0
+ * here, where a pair search (`connect`) might find a weak path. `pause` runs
+ * between the searches (to let the browser draw). Keyed by the candidate's name.
+ */
+export async function scoreArtistsAgainstList(
+  graph: GraphAccess,
+  candidates: ArtistRef[],
+  listArtists: ArtistRef[],
+  pause: () => Promise<void> = () => Promise.resolve()
+): Promise<Map<string, { score: number; found: boolean }>> {
+  const nodes = candidates.map((c) => resolveArtist(graph, c));
+  const ids = new Set(nodes.flatMap((n) => (n ? [n.id] : [])));
+  const searches: Array<Map<string, PathStep[]> | null> = [];
+  for (const liked of listArtists) {
+    const start = resolveArtist(graph, liked);
+    searches.push(start && ids.size > 0 ? strongestPaths(graph, start, ids) : null);
+    await pause();
+  }
+  const scores = new Map<string, { score: number; found: boolean }>();
+  candidates.forEach((c, i) => {
+    const node = nodes[i];
+    if (!node) {
+      scores.set(refName(c), { score: 0, found: false });
+      return;
+    }
+    const pairs: PairScore[] = listArtists.map((liked, j) => {
+      const path = searches[j]?.get(node.id) ?? null;
+      if (!searches[j]) return { name: refName(liked), found: false, distance: null, score: 0, path: null };
+      const strength = path ? pathStrength(path) : 0;
+      return { name: refName(liked), found: true, distance: path?.length ?? null, path, strength, score: strengthScore(strength) };
+    });
+    scores.set(refName(c), { score: aggregateScore(pairs), found: true });
+  });
+  return scores;
+}
+
+/**
  * Score a single artist against a list of artists, returning just the overall
  * 0..100 similarity. Convenience wrapper around `computeSimilarity` for ranking
  * external candidates (e.g. concert headliners) against a taste profile.

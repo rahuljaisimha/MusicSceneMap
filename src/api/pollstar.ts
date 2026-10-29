@@ -2,90 +2,39 @@
  * Pollstar client.
  *
  * Pollstar has a paid API, but its website backs onto public JSON endpoints we
- * can read for upcoming events. We keep usage polite:
- *   - pace requests at ~1 req/sec (relaxable via MIN_REQUEST_INTERVAL_MS)
- *   - send a realistic browser User-Agent (dev proxy / CORS proxy forwards it)
- *   - cache responses for 24h (results must stay fresh, but not hammer Pollstar)
+ * can read for upcoming events. We only ever ask them from our own server: the
+ * pollstar-city function asks Pollstar itself and shares a 24-hour cache
+ * between every visitor (a city's page is fetched from Pollstar at most once a
+ * day, whoever asks), and keeps the events for concert-database. The browser
+ * never calls Pollstar (it sends no CORS headers, and the public CORS proxy we
+ * used to go through now wants an API key). When the function can't get the
+ * data (Pollstar refusing with nothing cached), the request fails.
  *
- * Endpoints (observed):
+ * Endpoints (observed, as the function calls them):
  *   Autocomplete: https://autocomplete.pollstar.com/global/All/100/{query}
  *     → { response: { docs: [{ EntityId, ListName, City, State, Location,
  *                              EntityType, Rank, ... }] } }
- *   Events:       https://www.pollstar.com/api/companies/{venueId}/events
+ *   City events:  https://www.pollstar.com/api/cities/{cityId}/events
  *                   ?page=&pageSize=&fromDate=MM-DD-YYYY&toDate=MM-DD-YYYY
  *                   &sortAscending=true&sortColumn=playdate&newOnly=false
  *     → { totalPages, totalEvents, events: [{ id, name, playDate, url,
  *          isFestival, venue{...}, artists:[{ name, isHeadline, genres,
  *          artistType }], tickets:[{ name, url, time }] }] }
  *     NOTE: fromDate MUST be today-or-later; past dates are subscription-gated.
- *
- * Our server first: both calls go to the pollstar-events function, which asks
- * Pollstar itself and shares a 24-hour cache between every visitor (a venue is
- * fetched from Pollstar at most once a day, whoever asks), and keeps the events
- * for concert-database. Only when it can't get the data (Pollstar refusing with
- * nothing cached) does the browser ask Pollstar directly.
- *
- * CORS (that fallback): Pollstar sends no Access-Control-Allow-Origin header
- * (same as Setlist.fm). In dev we use Vite proxies; in prod a public CORS proxy.
  */
 
 import { cachedFetch } from "./cache";
 import { pollstarViaServer } from "./supabase";
 import { debugLog } from "../debug/DebugLog";
 
-const isDev = import.meta.env.DEV;
-
-/** 24h cache TTL — results stay fresh within a day. */
+/** 24h cache TTL (the browser's own copy) — results stay fresh within a day. */
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Minimum gap between Pollstar requests. Relaxable later. */
-const MIN_REQUEST_INTERVAL_MS = 1000;
-
-// --- Request pacing ---------------------------------------------------------
-// Serialize Pollstar requests through a promise chain so they fire one after
-// another spaced by MIN_REQUEST_INTERVAL_MS — but the FIRST request starts
-// immediately (no upfront delay).
-
-let pacingChain: Promise<void> = Promise.resolve();
-let lastRequestAt = 0;
-
-function paced<T>(fn: () => Promise<T>): Promise<T> {
-  const run = pacingChain.then(async () => {
-    const now = Date.now();
-    const wait = Math.max(0, lastRequestAt + MIN_REQUEST_INTERVAL_MS - now);
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    lastRequestAt = Date.now();
-  });
-  // Advance the chain regardless of success/failure so one error can't stall it.
-  pacingChain = run.catch(() => {});
-  return run.then(fn);
-}
-
-// --- URL construction (dev proxy vs prod CORS proxy) ------------------------
-
-function autocompleteUrl(query: string): string {
-  const path = `/global/All/100/${encodeURIComponent(query)}`;
-  if (isDev) return `/pollstar-ac${path}`;
-  return `https://corsproxy.io/?url=${encodeURIComponent(`https://autocomplete.pollstar.com${path}`)}`;
-}
-
-function eventsUrl(venueId: string, qs: string): string {
-  const path = `/api/companies/${venueId}/events?${qs}`;
-  if (isDev) return `/pollstar-api${path}`;
-  return `https://corsproxy.io/?url=${encodeURIComponent(`https://www.pollstar.com${path}`)}`;
-}
-
-const BROWSER_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
-
-async function pollstarFetch<T>(url: string): Promise<T> {
-  const response = await paced(() =>
-    fetch(url, { headers: { Accept: "application/json", "User-Agent": BROWSER_UA } })
-  );
-  if (!response.ok) {
-    throw new Error(`Pollstar request failed: ${response.status} ${response.statusText}`);
-  }
-  return response.json() as Promise<T>;
+/** Pollstar's JSON through our server, or an error when it can't get it. */
+async function viaServer<T>(params: { search?: string; city?: string; page?: string }): Promise<T> {
+  const data = await pollstarViaServer<T>(params);
+  if (data === null) throw new Error("Pollstar is unavailable right now. Try again in a little while.");
+  return data;
 }
 
 // --- Types ------------------------------------------------------------------
@@ -96,6 +45,17 @@ export interface PollstarVenue {
   city: string | null;
   state: string | null;
   location: string | null;
+  /** Pollstar prominence rank (higher = more prominent). */
+  rank: number;
+}
+
+export interface PollstarCity {
+  id: string;
+  /** "Berlin, Germany", "Los Angeles, CA". */
+  name: string;
+  /** "Berlin". */
+  city: string | null;
+  state: string | null;
   /** Pollstar prominence rank (higher = more prominent). */
   rank: number;
 }
@@ -173,6 +133,24 @@ export function parseVenues(raw: RawAutocomplete): PollstarVenue[] {
     }));
 }
 
+/** Autocomplete names come HTML-escaped ("Mumford &amp; Sons"). */
+function unescapeHtml(s: string): string {
+  return s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
+/** Parse the autocomplete response into cities only. */
+export function parseCities(raw: RawAutocomplete): PollstarCity[] {
+  return (raw.response?.docs ?? [])
+    .filter((d) => d.EntityType === "City")
+    .map((d) => ({
+      id: String(d.EntityId),
+      name: unescapeHtml(d.ListName),
+      city: d.City ? unescapeHtml(d.City) : null,
+      state: d.State || null,
+      rank: d.Rank ?? 0,
+    }));
+}
+
 /** Parse the events response into a flat list of events. */
 export function parseEvents(raw: RawEventsResponse): PollstarEvent[] {
   const events = raw.events ?? [];
@@ -206,65 +184,39 @@ export function formatPollstarDate(d: Date): string {
 
 // --- Public API -------------------------------------------------------------
 
-/** Search Pollstar venues by name, ranked by prominence (highest first). */
-export async function searchVenues(query: string): Promise<PollstarVenue[]> {
-  const key = `pollstar_ac_${query.toLowerCase()}`;
+/** Pollstar's autocomplete for a query (venues, cities, artists...), via our server. */
+function autocomplete(query: string): Promise<RawAutocomplete> {
   return cachedFetch(
-    key,
+    `pollstar_ac_${query.toLowerCase()}`,
     async () => {
       debugLog.log(`Pollstar autocomplete: "${query}"`);
-      // Our server's shared cache first; the browser asks Pollstar only if it can't.
-      const raw =
-        (await pollstarViaServer<RawAutocomplete>({ search: query })) ??
-        (await pollstarFetch<RawAutocomplete>(autocompleteUrl(query)));
-      const venues = parseVenues(raw).sort((a, b) => b.rank - a.rank);
-      debugLog.log(`Pollstar: ${venues.length} venues for "${query}"`);
-      return venues;
+      return viaServer<RawAutocomplete>({ search: query });
     },
     CACHE_TTL_MS
   );
 }
 
+/** Pollstar cities matching a name ("Berlin": Berlin, Germany; Berlin, MD; ...), most prominent first. */
+export async function searchCities(query: string): Promise<PollstarCity[]> {
+  return parseCities(await autocomplete(query.trim())).sort((a, b) => b.rank - a.rank);
+}
+
 /**
- * Fetch upcoming events for a venue (from today out to `yearsAhead` years).
- * `fromDate` is always today-or-later (Pollstar gates past dates). Asks our
- * pollstar-events function first (a cache shared by every visitor; `search`,
- * the venue search that found the venue, gives the server its name and city),
- * and Pollstar from the browser only if the function can't get it.
+ * One page (100, the function's page size) of a city's upcoming concerts,
+ * soonest first, from today out to 4 years, via our pollstar-city function.
  */
-export async function getUpcomingEvents(
-  venueId: string,
-  opts: { pageSize?: number; yearsAhead?: number; search?: string } = {}
-): Promise<PollstarEvent[]> {
-  const pageSize = opts.pageSize ?? 25;
-  const yearsAhead = opts.yearsAhead ?? 4;
-
-  const today = new Date();
-  const from = formatPollstarDate(today);
-  const toDate = new Date(today);
-  toDate.setFullYear(toDate.getFullYear() + yearsAhead);
-  const to = formatPollstarDate(toDate);
-
-  const key = `pollstar_events_${venueId}_${from}`;
+export async function getCityEvents(
+  cityId: string,
+  page: number
+): Promise<{ events: PollstarEvent[]; totalPages: number; totalEvents: number }> {
   return cachedFetch(
-    key,
+    `pollstar_city_${cityId}_${page}`,
     async () => {
-      const qs = new URLSearchParams({
-        page: "0",
-        pageSize: String(pageSize),
-        fromDate: from,
-        toDate: to,
-        sortAscending: "true",
-        sortColumn: "playdate",
-        newOnly: "false",
-      }).toString();
-      debugLog.log(`Pollstar events: venue ${venueId} from ${from}`);
-      const raw =
-        (await pollstarViaServer<RawEventsResponse>({ venue: venueId, search: opts.search })) ??
-        (await pollstarFetch<RawEventsResponse>(eventsUrl(venueId, qs)));
+      debugLog.log(`Pollstar city events: city ${cityId} page ${page}`);
+      const raw = await viaServer<RawEventsResponse>({ city: cityId, page: String(page) });
       const events = parseEvents(raw);
-      debugLog.log(`Pollstar: ${events.length} upcoming events for venue ${venueId}`);
-      return events;
+      debugLog.log(`Pollstar: ${events.length} events (page ${page}) for city ${cityId}`);
+      return { events, totalPages: raw.totalPages ?? 1, totalEvents: raw.totalEvents ?? events.length };
     },
     CACHE_TTL_MS
   );

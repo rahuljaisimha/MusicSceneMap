@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { rankConcerts, dedupeEvents, headlineArtist } from "../pages/concerts";
 import type { GraphAccess, SimNode, SimNeighbor } from "../pages/similarity";
 import type { PollstarEvent } from "../api/pollstar";
-import { parseVenues, parseEvents, formatPollstarDate } from "../api/pollstar";
+import { parseVenues, parseCities, parseEvents, formatPollstarDate } from "../api/pollstar";
 
 /**
  * Fake graph: Ty Segall and Charles Moothart are connected (share Fuzz).
@@ -180,3 +180,24 @@ describe("Pollstar parsing", () => {
     expect(formatPollstarDate(new Date(2026, 8, 28))).toBe("09-28-2026");
   });
 });
+
+describe("parseCities", () => {
+  it("keeps only cities, unescaped, with their rank", () => {
+    const raw = {
+      response: {
+        docs: [
+          { EntityId: "65443", ListName: "Berlin, Germany", EntityType: "City", City: "Berlin", State: "", Rank: 250 },
+          { EntityId: "48929", ListName: "Berlin", EntityType: "Artist", Rank: 33 },
+          { EntityId: "8942", ListName: "Berlin, MD", EntityType: "City", City: "Berlin", State: "MD", Rank: 100 },
+          { EntityId: "1", ListName: "Coeur d&#39;Alene, ID", EntityType: "City", City: "Coeur d&#39;Alene", State: "ID" },
+        ],
+      },
+    };
+    expect(parseCities(raw)).toEqual([
+      { id: "65443", name: "Berlin, Germany", city: "Berlin", state: null, rank: 250 },
+      { id: "8942", name: "Berlin, MD", city: "Berlin", state: "MD", rank: 100 },
+      { id: "1", name: "Coeur d'Alene, ID", city: "Coeur d'Alene", state: "ID", rank: 0 },
+    ]);
+  });
+});
+

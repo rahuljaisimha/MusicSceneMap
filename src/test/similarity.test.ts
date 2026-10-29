@@ -3,6 +3,7 @@ import {
   computeSimilarity,
   aggregateScore,
   strongestPaths,
+  connect,
   pathStrength,
   pathLength,
   HOP_DISTANCE,
@@ -25,6 +26,7 @@ import {
   type SimNode,
   type SimNeighbor,
   type PairScore,
+  type PathStep,
 } from "../pages/similarity";
 
 /**
@@ -580,8 +582,8 @@ describe("weak paths", () => {
     expect(ranked.path).toBe(null);
   });
 
-  it("with closest, searches a weak pair again from the liked artist's end", () => {
-    // Hub's search spends its whole budget on its 12,000 fans before it reaches Small
+  it("finds a path that a search from the hub's end alone runs out of budget for, either way round", () => {
+    // Hub's own search spends its whole budget on its 12,000 fans before it reaches Small
     const n = (id: string): SimNode => ({ id, name: id, type: "person" });
     const fans = Array.from({ length: 12000 }, (_, i) => `fan${i}`);
     const g: GraphAccess = {
@@ -595,10 +597,15 @@ describe("weak paths", () => {
         return [];
       },
     };
-    expect(computeSimilarity(g, "Hub", ["Small"]).pairs[0]!.path).toBe(null);
-    const both = computeSimilarity(g, "Hub", ["Small"], { closest: true }).pairs[0]!;
-    expect(both.path!.map((s) => s.to.name)).toEqual(["Mid", "Hub"]);
-    expect(both.score).toBe(64);
+    const stats = { capped: false };
+    expect(strongestPaths(g, n("Hub"), new Set(["Small"]), undefined, stats).has("Small")).toBe(false);
+    expect(stats.capped).toBe(true);
+    const small = computeSimilarity(g, "Hub", ["Small"]).pairs[0]!;
+    expect(small.path!.map((s) => `${s.from.name}->${s.to.name}`)).toEqual(["Small->Mid", "Mid->Hub"]);
+    expect(small.score).toBe(64);
+    const hub = computeSimilarity(g, "Small", ["Hub"]).pairs[0]!;
+    expect(hub.path!.map((s) => `${s.from.name}->${s.to.name}`)).toEqual(["Hub->Mid", "Mid->Small"]);
+    expect(hub.score).toBe(64);
   });
 });
 
@@ -643,3 +650,95 @@ describe("two passes (the Similarity page)", () => {
   });
 });
 
+
+
+describe("bidirectional search (connect)", () => {
+  /** A chain A - B - C - D - E - F - G - H of member_of links, plus a weak shortcut A - H. */
+  function chain(): GraphAccess {
+    const n = (id: string): SimNode => ({ id, name: id, type: "group" });
+    const ids = ["A", "B", "C", "D", "E", "F", "G", "H"];
+    const edges: Array<[string, string, string]> = ids.slice(1).map((id, i) => [ids[i]!, id, "member_of"]);
+    edges.push(["A", "H", "produced_for"]);
+    return {
+      findNodeByName: (name) => n(name),
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t, rel] of edges) {
+          if (s === id) out.push({ node: n(t), relType: rel, outgoing: true });
+          if (t === id) out.push({ node: n(s), relType: rel, outgoing: false });
+        }
+        return out;
+      },
+    };
+  }
+  const continuous = (path: PathStep[], from: string, to: string) => {
+    expect(path[0]!.from.id).toBe(from);
+    expect(path[path.length - 1]!.to.id).toBe(to);
+    path.slice(1).forEach((s, i) => expect(s.from.id).toBe(path[i]!.to.id));
+  };
+
+  it("reads from the first artist to the second, hop after hop", () => {
+    const g = chain();
+    const n = (id: string): SimNode => ({ id, name: id, type: "group" });
+    const path = connect(g, n("B"), n("F"))!;
+    continuous(path, "B", "F");
+    expect(path.map((s) => s.to.id)).toEqual(["C", "D", "E", "F"]);
+    // Every hop keeps its edge's direction: B is the member of C, so B -> C is from the source
+    expect(path[0]!.fromIsSource).toBe(true);
+    const back = connect(g, n("F"), n("B"))!;
+    continuous(back, "F", "B");
+    expect(back[0]!.fromIsSource).toBe(false);
+  });
+
+  it("costs the joined path exactly: two free hops, then 0.9 per hop", () => {
+    const g = chain();
+    const n = (id: string): SimNode => ({ id, name: id, type: "group" });
+    expect(pathStrength(connect(g, n("A"), n("C"))!)).toBeCloseTo(1);
+    expect(pathStrength(connect(g, n("A"), n("E"))!)).toBeCloseTo(HOP_DAMPING ** 2);
+  });
+
+  it("doesn't join halves into a path past MAX_HOPS", () => {
+    const g = chain();
+    const n = (id: string): SimNode => ({ id, name: id, type: "group" });
+    // A -> H is 7 member_of hops (too many): the weak producer shortcut is the path
+    const path = connect(g, n("A"), n("H"))!;
+    expect(MAX_HOPS).toBe(6);
+    expect(path.map((s) => s.relType)).toEqual(["produced_for"]);
+  });
+
+  it("returns the path it costed, even after the nodes it went through are re-pointed", () => {
+    // Two routes S -> M: S - X - M (two strong hops) and S - Y - Z - M (three free member_of
+    // hops, found later with more hops). The meeting must keep the route it was costed on.
+    const n = (id: string): SimNode => ({ id, name: id, type: "group" });
+    const edges: Array<[string, string, string]> = [
+      ["S", "X", "member_of"], ["X", "M", "opened_for"], ["S", "Y", "member_of"], ["Y", "Z", "member_of"],
+      ["Z", "M", "member_of"], ["M", "T1", "member_of"], ["T1", "T2", "member_of"], ["T2", "T", "member_of"],
+    ];
+    const g: GraphAccess = {
+      findNodeByName: (name) => n(name),
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t, rel] of edges) {
+          if (s === id) out.push({ node: n(t), relType: rel, outgoing: true });
+          if (t === id) out.push({ node: n(s), relType: rel, outgoing: false });
+        }
+        return out;
+      },
+    };
+    const path = connect(g, n("S"), n("T"))!;
+    continuous(path, "S", "T");
+    expect(path.length).toBeLessThanOrEqual(MAX_HOPS);
+    const one = strongestPaths(g, n("S"), new Set(["T"])).get("T")!;
+    expect(pathStrength(path)).toBeCloseTo(pathStrength(one));
+  });
+
+  it("agrees with the one-ended search on the test graph", () => {
+    const g = makeGraph();
+    for (const [a, b] of [["Charles Moothart", "Ty Segall"], ["Mikal Cronin", "Ty Segall"], ["Ty Segall", "Mikal Cronin"]] as const) {
+      const from = g.findNodeByName(a)!;
+      const to = g.findNodeByName(b)!;
+      const one = strongestPaths(g, from, new Set([to.id])).get(to.id)!;
+      expect(pathStrength(connect(g, from, to)!)).toBeCloseTo(pathStrength(one));
+    }
+  });
+});

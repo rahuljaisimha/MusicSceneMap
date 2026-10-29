@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { streamConcerts, pickCity, MAX_CITY_PAGES, type ConcertSearchDeps, type ConcertSearchUpdate } from "../pages/concertSearch";
+import { streamConcerts, pickCity, searchProgress, MAX_CITY_PAGES, type ConcertSearchDeps, type ConcertSearchUpdate } from "../pages/concertSearch";
 import { sortConcerts, toConcert } from "../pages/concerts";
 import type { PollstarCity, PollstarEvent } from "../api/pollstar";
 
@@ -170,3 +170,20 @@ describe("sortConcerts", () => {
     expect(sortConcerts([a, b, c]).map((x) => x.id)).toEqual(["c", "b", "a"]);
   });
 });
+
+describe("searchProgress", () => {
+  const base = { stage: "concerts" as const, city: "Berlin, Germany", pagesLoaded: 1, pagesTotal: 2, concertsTotal: 150, scoring: 0 };
+  const scored = (n: number, of: number) =>
+    Array.from({ length: of }, (_, i) => toConcert(ev(`e${i}`, `A${i}`, "2027-01-01"), `A${i}`, i < n ? { score: 1, found: true } : undefined));
+  it("moves with the pages loaded and the concerts scored, and ends at 1", () => {
+    expect(searchProgress({ ...base, stage: "city", city: null, pagesTotal: 0 }, [])).toBe(0.05);
+    const half = searchProgress(base, scored(0, 10));
+    const halfScored = searchProgress(base, scored(10, 10));
+    const all = searchProgress({ ...base, pagesLoaded: 2 }, scored(10, 10));
+    expect(half).toBeGreaterThan(0.05);
+    expect(halfScored).toBeGreaterThan(half);
+    expect(all).toBeCloseTo(1);
+    expect(searchProgress({ ...base, stage: "done" }, [])).toBe(1);
+  });
+});
+

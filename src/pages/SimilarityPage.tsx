@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { computeSimilarity, FREE_HOPS, HOP_DAMPING, mergePairs, MIN_STRENGTH, pendingPairs, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
+import { computeSimilarity, mergePairs, MIN_STRENGTH, pendingPairs, type PairScore, type SimilarityResult } from "./similarity";
+import { panelStyles, PathSteps, scoreColor, scoreFormula } from "../components/ConnectionPath";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
-import { relationSentence } from "../graph/relationships";
 import { addPicked, chipLabel, fromSuggestion, inputArtist, pickedKey, type PickedArtist } from "./pickedArtists";
 
 /**
@@ -20,13 +20,6 @@ function nextPaint(): Promise<void> {
     requestAnimationFrame(go);
     setTimeout(go, 100);
   });
-}
-
-function scoreColor(score: number): string {
-  if (score >= 70) return "#55efc4";
-  if (score >= 40) return "#feca57";
-  if (score >= 15) return "#ff9f43";
-  return "#636e72";
 }
 
 function scoreLabel(score: number): string {
@@ -280,45 +273,6 @@ export function SimilarityPage() {
   );
 }
 
-/** "1.00 × 0.80 × 0.80 × 0.9 = 0.58 → 58": how the strongest path's weights make the score. */
-function scoreFormula(pair: PairScore): string {
-  const path = pair.path;
-  if (path == null) return "0";
-  if (path.length === 0) return "Same artist: 100.";
-  const extra = Math.max(0, path.length - FREE_HOPS);
-  const damping = extra === 0 ? "" : ` × ${HOP_DAMPING}${extra === 1 ? "" : superscript(extra)}`;
-  const weights = path.map((s) => s.weight.toFixed(2)).join(" × ");
-  const strength = pair.strength ?? 0;
-  // Two decimals would read 0.00 for the weakest paths
-  const shown = strength < 0.01 ? strength.toFixed(3) : strength.toFixed(2);
-  const floor = pair.score === 0 ? ` (under ${MIN_STRENGTH} counts as 0)` : "";
-  return `${weights}${damping} = ${shown} → ${pair.score}${floor}`;
-}
-
-/**
- * Why a hop counts for what it does: how often it happened ("12 songs: 0.80 → 0.97"),
- * and hub damping ("Damped from 0.97: Taylor Swift has 133 links of this kind").
- */
-function stepNotes(step: PathStep): string[] {
-  const notes: string[] = [];
-  const base = step.baseWeight ?? step.weight;
-  if (step.count !== undefined) {
-    const unit = step.relType === "opened_for" ? "show" : "song";
-    const times = `${step.count} ${unit}${step.count === 1 ? "" : "s"}`;
-    const plain = REL_WEIGHTS[step.relType];
-    notes.push(plain !== undefined && base > plain ? `${times}: ${plain.toFixed(2)} → ${base.toFixed(2)}` : times);
-  }
-  if (step.hubs) {
-    const who = step.hubs.map((h) => `${h.node.name} has ${h.count}`).join(", ");
-    notes.push(`Damped from ${base.toFixed(2)}: ${who} links of this kind`);
-  }
-  return notes;
-}
-
-function superscript(n: number): string {
-  return String(n).replace(/\d/g, (d) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(d)]!);
-}
-
 /**
  * How one liked artist relates to the compared artist. Uses Explore's node
  * panel (.info-panel): a sidebar on desktop, a bottom sheet on phones.
@@ -336,39 +290,27 @@ function ConnectionPanel({
 }) {
   const path = pair.path;
   return (
-    <aside id="connection-panel" className="info-panel" style={styles.panel} aria-label="How they connect">
-      <div style={styles.panelHeader}>
-        <span style={{ ...styles.panelBadge, background: scoreColor(pair.score) }}>{pair.score}/100</span>
-        <button onClick={onClose} className="info-close" style={styles.panelClose} aria-label="Close panel">
+    <aside id="connection-panel" className="info-panel" style={panelStyles.panel} aria-label="How they connect">
+      <div style={panelStyles.header}>
+        <span style={{ ...panelStyles.badge, background: scoreColor(pair.score) }}>{pair.score}/100</span>
+        <button onClick={onClose} className="info-close" style={panelStyles.close} aria-label="Close panel">
           ×
         </button>
       </div>
-      <h2 style={styles.panelTitle}>{pair.name} → {result.targetName}</h2>
-      <section style={styles.sheetSection}>
+      <h2 style={panelStyles.title}>{pair.name} → {result.targetName}</h2>
+      <section style={panelStyles.section}>
         {path == null ? (
-          <p style={styles.sheetMuted}>{searching ? "Looking for the closest connection…" : "No connection within 6 hops."}</p>
+          <p style={panelStyles.muted}>{searching ? "Looking for the closest connection…" : "No connection within 6 hops."}</p>
         ) : path.length === 0 ? (
-          <p style={styles.sheetMuted}>Same artist.</p>
+          <p style={panelStyles.muted}>Same artist.</p>
         ) : (
-          <ol style={styles.pathList}>
-            {path.map((step, i) => (
-              <li key={i} style={styles.pathStep}>
-                <span style={styles.weightRow}>
-                  <span>{relationSentence(step.relType, step.from.name, step.to.name, step.fromIsSource)}</span>
-                  <span style={styles.weightValue}>{step.weight.toFixed(2)}</span>
-                </span>
-                {stepNotes(step).map((note) => (
-                  <span key={note} style={styles.hubNote}>{note}</span>
-                ))}
-              </li>
-            ))}
-          </ol>
+          <PathSteps path={path} />
         )}
       </section>
 
-      <section style={styles.sheetSection}>
-        <h3 style={styles.sheetHeading}>Score</h3>
-        <p style={styles.sheetMuted}>{scoreFormula(pair)}</p>
+      <section style={panelStyles.section}>
+        <h3 style={panelStyles.heading}>Score</h3>
+        <p style={panelStyles.muted}>{scoreFormula(pair, MIN_STRENGTH)}</p>
       </section>
     </aside>
   );
@@ -404,20 +346,6 @@ const styles: Record<string, React.CSSProperties> = {
   pairCard: { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", padding: "0.75rem", marginBottom: "0.5rem" },
   pairSelected: { border: "1px solid #48dbfb" },
   pairButton: { display: "block", width: "100%", textAlign: "left", font: "inherit", color: "inherit", cursor: "pointer", minHeight: "44px" },
-  // Same look as Explore's InfoPanel.
-  panel: { width: "280px", maxWidth: "100%", padding: "1rem", background: "#1a1a1a", borderLeft: "1px solid #2a2a2a", overflowY: "auto", display: "flex", flexDirection: "column", gap: "1rem", flexShrink: 0 },
-  panelHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "-0.5rem" },
-  panelBadge: { padding: "2px 8px", borderRadius: "3px", fontSize: "0.75rem", fontWeight: 600, color: "#000" },
-  panelClose: { background: "none", border: "none", color: "#888", fontSize: "1.5rem", cursor: "pointer", lineHeight: 1 },
-  panelTitle: { fontSize: "1.2rem", fontWeight: 600, overflowWrap: "anywhere", margin: 0 },
-  sheetSection: { display: "flex", flexDirection: "column", gap: "0.4rem" },
-  sheetHeading: { fontSize: "0.75rem", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.03em", margin: 0 },
-  sheetMuted: { fontSize: "0.8rem", color: "#888", margin: 0 },
-  pathList: { margin: 0, paddingLeft: "1.25rem", display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.85rem", color: "#e0e0e0" },
-  pathStep: { overflowWrap: "anywhere" },
-  hubNote: { display: "block", fontSize: "0.72rem", color: "#888", marginTop: "0.1rem" },
-  weightRow: { display: "flex", justifyContent: "space-between", gap: "0.75rem", fontSize: "0.8rem", color: "#e0e0e0" },
-  weightValue: { color: "#48dbfb", fontVariantNumeric: "tabular-nums", flexShrink: 0 },
   pairHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" },
   pairName: { fontWeight: 600, color: "#e0e0e0", fontSize: "0.95rem" },
   pairScore: { fontSize: "1.1rem", fontWeight: 700 },

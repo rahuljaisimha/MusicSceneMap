@@ -35,6 +35,17 @@ export interface ConcertSearchDeps {
     artists: string[],
     onScore: (artist: string, score: HeadlinerScore) => void
   ): Promise<Map<string, HeadlinerScore>>;
+  /**
+   * Optional: headliners scoreMany left out (missing from what it could look up
+   * quickly) are put off until every page is in and scored, then handed here,
+   * to look up the slow way (MusicBrainz, about one a second) and score.
+   * Without it they score 0.
+   */
+  scoreLater?(
+    artists: string[],
+    onScore: (artist: string, score: HeadlinerScore) => void,
+    isStopped: () => boolean
+  ): Promise<void>;
 }
 
 export interface ConcertSearchProgress {
@@ -48,6 +59,8 @@ export interface ConcertSearchProgress {
   concertsTotal: number;
   /** Headliners still waiting for their score. */
   scoring: number;
+  /** Of those, the ones put off to be looked up on MusicBrainz at the end. */
+  lookingUp: number;
 }
 
 export interface ConcertSearchUpdate {
@@ -88,6 +101,8 @@ export async function streamConcerts(
   const scores = new Map<string, HeadlinerScore>(); // by lowercased headliner
   const queued = new Set<string>();
   const batches: string[][] = [];
+  /** Headliners put off for scoreLater. */
+  const later: string[] = [];
   let scoringNow = 0;
   const progress: ConcertSearchProgress = {
     stage: "city",
@@ -96,11 +111,27 @@ export async function streamConcerts(
     pagesTotal: 0,
     concertsTotal: 0,
     scoring: 0,
+    lookingUp: 0,
   };
   const emit = () => {
     if (isStopped()) return;
-    progress.scoring = batches.reduce((n, b) => n + b.length, 0) + scoringNow;
+    progress.lookingUp = later.length;
+    progress.scoring = batches.reduce((n, b) => n + b.length, 0) + scoringNow + later.length;
     onUpdate({ concerts: sortConcerts([...concerts.values()]), progress: { ...progress } });
+  };
+
+  // Each headliner's concerts move into place as soon as its score is known
+  const apply = (name: string, sc: HeadlinerScore) => {
+    const key = name.toLowerCase();
+    if (scores.has(key)) return;
+    scores.set(key, sc);
+    scoringNow = Math.max(0, scoringNow - 1);
+    for (const [id, c] of concerts) {
+      if (!c.scored && c.artistName.toLowerCase() === key) {
+        concerts.set(id, { ...c, scored: true, score: sc.score, artistFound: sc.found, ...(sc.pairs ? { pairs: sc.pairs } : {}) });
+      }
+    }
+    emit();
   };
 
   // Scoring runs alongside the Pollstar requests, a page's headliners at a time.
@@ -111,26 +142,20 @@ export async function streamConcerts(
       while (batches.length > 0 && !isStopped()) {
         const batch = batches.shift()!;
         scoringNow = batch.length;
-        // Each headliner's concerts move into place as soon as its score is known
-        const apply = (name: string, s: HeadlinerScore) => {
-          const key = name.toLowerCase();
-          if (scores.has(key)) return;
-          scores.set(key, s);
-          scoringNow = Math.max(0, scoringNow - 1);
-          for (const [id, c] of concerts) {
-            if (!c.scored && c.artistName.toLowerCase() === key) {
-              concerts.set(id, { ...c, scored: true, score: s.score, artistFound: s.found, ...(s.pairs ? { pairs: s.pairs } : {}) });
-            }
-          }
-          emit();
-        };
         const results = await deps
-          .scoreMany(batch, (name, s) => {
-            if (!isStopped()) apply(name, s);
+          .scoreMany(batch, (name, sc) => {
+            if (!isStopped()) apply(name, sc);
           })
           .catch(() => new Map<string, HeadlinerScore>());
-        for (const name of batch) apply(name, results.get(name) ?? { score: 0, found: false });
+        for (const name of batch) {
+          if (scores.has(name.toLowerCase())) continue;
+          const sc = results.get(name);
+          if (sc) apply(name, sc);
+          else if (deps.scoreLater) later.push(name);
+          else apply(name, { score: 0, found: false });
+        }
         scoringNow = 0;
+        emit();
       }
     })().finally(() => {
       pumping = null;
@@ -183,6 +208,25 @@ export async function streamConcerts(
     if (pumping) await pumping;
     else if (batches.length > 0 && !isStopped()) pump();
     else break;
+  }
+  // Last, the headliners put off for the slow lookup, one at a time
+  if (later.length > 0 && deps.scoreLater && !isStopped()) {
+    const todo = [...later];
+    emit();
+    await deps
+      .scoreLater(
+        todo,
+        (name, sc) => {
+          if (isStopped()) return;
+          const i = later.findIndex((l) => l.toLowerCase() === name.toLowerCase());
+          if (i >= 0) later.splice(i, 1);
+          apply(name, sc);
+        },
+        isStopped
+      )
+      .catch(() => {});
+    if (isStopped()) return;
+    for (const name of later.splice(0)) apply(name, { score: 0, found: false });
   }
   if (isStopped()) return;
   progress.stage = "done";

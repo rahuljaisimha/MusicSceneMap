@@ -54,6 +54,8 @@ export class TieredGraphAccess {
   private overlayById = new Map<string, Subgraph>();
   /** In-flight resolutions, keyed by lookupKey, to dedupe concurrent fetches. */
   private inFlight = new Map<string, Promise<Tier>>();
+  /** Keys Postgres missed while MusicBrainz was held back (`musicBrainz: false`): MusicBrainz can still be asked later. */
+  private postgresMisses = new Set<string>();
 
   // Injected so this class stays testable without sql.js / real network.
   constructor(
@@ -67,8 +69,14 @@ export class TieredGraphAccess {
    * in the core graph are skipped (no network). Returns which tier answered
    * each, keyed by its MusicBrainz ID when it has one, else by the name given.
    * Duplicates (same ID, or same name case-insensitively) are resolved once.
+   *
+   * `musicBrainz: false` stops at Postgres: MusicBrainz allows about one request
+   * a second, so a caller with many artists (Discover's headliners) can resolve
+   * what it can now and ask MusicBrainz for the rest later, a few at a time. An
+   * artist missed that way isn't remembered as a miss, so a later call asks
+   * MusicBrainz (and not Postgres again).
    */
-  async prepareArtists(artists: ArtistRef[]): Promise<Map<string, Tier>> {
+  async prepareArtists(artists: ArtistRef[], { musicBrainz = true }: { musicBrainz?: boolean } = {}): Promise<Map<string, Tier>> {
     const tiers = new Map<string, Tier>();
 
     // Dedupe by key, keeping the first original spelling.
@@ -80,7 +88,7 @@ export class TieredGraphAccess {
 
     await Promise.all(
       [...uniqueByKey.values()].map(async (ref) => {
-        const tier = await this.resolveOne(ref);
+        const tier = await this.resolveOne(ref, musicBrainz);
         tiers.set(refId(ref) ?? refName(ref), tier);
       })
     );
@@ -96,7 +104,7 @@ export class TieredGraphAccess {
   }
 
   /** Resolve a single artist, sharing any in-flight resolution for the same key. */
-  private resolveOne(ref: ArtistRef): Promise<Tier> {
+  private resolveOne(ref: ArtistRef, musicBrainz = true): Promise<Tier> {
     const key = lookupKey(ref);
 
     // Tier 1: already in core graph?
@@ -108,17 +116,25 @@ export class TieredGraphAccess {
       return Promise.resolve<Tier>(sg ? "postgres" : "miss");
     }
 
-    // Share an in-flight fetch for the same key.
+    // Share an in-flight fetch for the same key (and if it held MusicBrainz back
+    // and missed, ask MusicBrainz after it).
     const existing = this.inFlight.get(key);
-    if (existing) return existing;
+    if (existing) {
+      return musicBrainz
+        ? existing.then((t) => (t === "miss" && this.postgresMisses.has(key) ? this.resolveOne(ref, true) : t))
+        : existing;
+    }
+
+    // Postgres already missed it while MusicBrainz was held back
+    if (this.postgresMisses.has(key) && !musicBrainz) return Promise.resolve<Tier>("miss");
 
     const id = refId(ref);
-    const promise = this.fetchAndStore(key, { name: refName(ref), ...(id ? { id } : {}) });
+    const promise = this.fetchAndStore(key, { name: refName(ref), ...(id ? { id } : {}) }, musicBrainz);
     this.inFlight.set(key, promise);
     return promise;
   }
 
-  private async fetchAndStore(key: string, artist: ArtistLookup): Promise<Tier> {
+  private async fetchAndStore(key: string, artist: ArtistLookup, musicBrainz: boolean): Promise<Tier> {
     try {
       // 24h cache?
       const cached = getCached<Subgraph | null>(`tier2_${key}`, CACHE_TTL_MS);
@@ -130,10 +146,18 @@ export class TieredGraphAccess {
       // Tier 2: Postgres, then Tier 3: MusicBrainz.
       let sg: Subgraph | null = null;
       let tier: Tier = "miss";
-      try {
-        sg = await this.fetchPostgres(artist);
-        if (sg) tier = "postgres";
-      } catch { /* fall through */ }
+      if (!this.postgresMisses.has(key)) {
+        try {
+          sg = await this.fetchPostgres(artist);
+          if (sg) tier = "postgres";
+        } catch { /* fall through */ }
+      }
+
+      if (!sg && !musicBrainz) {
+        // Not remembered as a miss: MusicBrainz may still have it
+        this.postgresMisses.add(key);
+        return "miss";
+      }
 
       if (!sg) {
         try {
@@ -142,6 +166,7 @@ export class TieredGraphAccess {
         } catch { /* fall through */ }
       }
 
+      this.postgresMisses.delete(key);
       this.storeOverlay(key, sg);
       setCache(`tier2_${key}`, sg);
       return tier;

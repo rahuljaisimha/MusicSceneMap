@@ -131,6 +131,36 @@ describe("TieredGraphAccess", () => {
   });
 });
 
+describe("TieredGraphAccess holding MusicBrainz back", () => {
+  it("stops at Postgres, then asks only MusicBrainz later", async () => {
+    const pg = vi.fn().mockResolvedValue(null);
+    const mb = vi.fn().mockResolvedValue({ node: { id: "mbid1", name: "Obscure Band", type: "group" }, neighbors: [] });
+    const tiered = new TieredGraphAccess(makeCore(), pg, mb);
+
+    const now = await tiered.prepareArtists(["Obscure Band"], { musicBrainz: false });
+    expect(now.get("Obscure Band")).toBe("miss");
+    expect(mb).not.toHaveBeenCalled();
+    expect(tiered.build().findNodeByName("Obscure Band")).toBe(null);
+    // Asked again without MusicBrainz: no new request
+    await tiered.prepareArtists(["Obscure Band"], { musicBrainz: false });
+    expect(pg).toHaveBeenCalledTimes(1);
+
+    const later = await tiered.prepareArtists(["Obscure Band"]);
+    expect(later.get("Obscure Band")).toBe("musicbrainz");
+    expect(pg).toHaveBeenCalledTimes(1);
+    expect(mb).toHaveBeenCalledTimes(1);
+    expect(tiered.build().findNodeByName("Obscure Band")?.id).toBe("mbid1");
+  });
+
+  it("still uses Postgres when it has the artist", async () => {
+    const pg = vi.fn().mockResolvedValue({ node: { id: "s", name: "The Sleeves", type: "group" }, neighbors: [] });
+    const mb = vi.fn();
+    const tiered = new TieredGraphAccess(makeCore(), pg, mb);
+    expect((await tiered.prepareArtists(["The Sleeves"], { musicBrainz: false })).get("The Sleeves")).toBe("postgres");
+    expect(mb).not.toHaveBeenCalled();
+  });
+});
+
 describe("TieredGraphAccess with picked artists (MusicBrainz IDs)", () => {
   it("uses the core graph when it has the ID", async () => {
     const pg = vi.fn().mockResolvedValue(null);

@@ -6,12 +6,16 @@
  *   GET ?search=<city name>               Pollstar's autocomplete (cities, venues, artists...)
  *   GET ?city=<Pollstar city id>&page=<n> a page (PAGE_SIZE) of the city's upcoming
  *                                          events, soonest first, today to YEARS_AHEAD out
+ *       &from=YYYY-MM-DD&to=YYYY-MM-DD    ... or within those dates (both or neither;
+ *                                          from no earlier than yesterday, to no later
+ *                                          than YEARS_AHEAD out)
  *   → { source: "cache" | "pollstar" | "stale", fetchedAt, data: <Pollstar's JSON> }
  *   → 503 { unavailable: true } when Pollstar refuses and nothing is cached
  *
  * The cache is the user_requested_data table (migration 009): a search is a
  * `pollstar_search` row (key: the lowercased search, as pollstar-events stores
- * it), a page of a city's events a `pollstar_city` row (key: "<city id>:<page>").
+ * it), a page of a city's events a `pollstar_city` row (key: "<city id>:<page>",
+ * or "<city id>:<from>:<to>:<page>" for a date range).
  * A row under CACHE_TTL_MS old is served without asking Pollstar; when Pollstar
  * refuses, an older row is served as "stale". Everything stored was fetched here,
  * so nothing a browser sends ends up in the table.
@@ -28,6 +32,15 @@ const MAX_PAGE = 49;
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
 const CITY_ID = /^\d{1,12}$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A YYYY-MM-DD date as UTC midnight, or null when it isn't one. */
+function parseDate(s: string): Date | null {
+  if (!DATE.test(s)) return null;
+  const d = new Date(`${s}T00:00:00Z`);
+  return isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s ? null : d;
+}
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -109,12 +122,26 @@ serve(async (req) => {
       const page = Number(url.searchParams.get("page") ?? "0");
       if (!CITY_ID.test(cityId)) return reply(400, { error: "bad city" });
       if (!Number.isInteger(page) || page < 0 || page > MAX_PAGE) return reply(400, { error: "bad page" });
-      return await serveCached("pollstar_city", `${cityId}:${page}`, async () => {
-        const today = new Date();
-        const to = new Date(today);
-        to.setUTCFullYear(to.getUTCFullYear() + YEARS_AHEAD);
+      const fromParam = url.searchParams.get("from");
+      const toParam = url.searchParams.get("to");
+      if ((fromParam === null) !== (toParam === null)) return reply(400, { error: "give both from and to, or neither" });
+      const today = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+      const last = new Date(today);
+      last.setUTCFullYear(last.getUTCFullYear() + YEARS_AHEAD);
+      let range: { from: Date; to: Date } = { from: today, to: last };
+      if (fromParam !== null && toParam !== null) {
+        const from = parseDate(fromParam);
+        const to = parseDate(toParam);
+        // A visitor's "today" can be UTC's yesterday; Pollstar only serves from today
+        if (!from || !to || from.getTime() < today.getTime() - DAY_MS || to < from || to.getTime() > last.getTime() + DAY_MS) {
+          return reply(400, { error: "bad dates" });
+        }
+        range = { from: from < today ? today : from, to };
+      }
+      const key = fromParam !== null ? `${cityId}:${fromParam}:${toParam}:${page}` : `${cityId}:${page}`;
+      return await serveCached("pollstar_city", key, async () => {
         const qs = new URLSearchParams({
-          page: String(page), pageSize: String(PAGE_SIZE), fromDate: mmddyyyy(today), toDate: mmddyyyy(to),
+          page: String(page), pageSize: String(PAGE_SIZE), fromDate: mmddyyyy(range.from), toDate: mmddyyyy(range.to),
           sortAscending: "true", sortColumn: "playdate", newOnly: "false",
         });
         const events = await fromPollstar(`https://www.pollstar.com/api/cities/${cityId}/events?${qs}`);

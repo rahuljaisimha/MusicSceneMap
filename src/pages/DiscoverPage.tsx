@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { searchCities, getCityEvents } from "../api/pollstar";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { scoreArtistsAgainstList } from "./similarity";
-import { CITY_PAGE_SIZE, pickCity, streamConcerts, type ConcertSearchProgress } from "./concertSearch";
+import { CITY_PAGE_SIZE, MAX_CITY_PAGES, pickCity, streamConcerts, type ConcertSearchProgress } from "./concertSearch";
+import { clampRange, defaultRange, formatRange, isoDate, maxDate, type DateRange } from "./dateRange";
 import type { RankedConcert } from "./concerts";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { addPicked, chipLabel, fromSuggestion, pickedKey, type PickedArtist } from "./pickedArtists";
@@ -15,6 +16,9 @@ function yieldToBrowser(): Promise<void> {
 export function DiscoverPage() {
   const [city, setCity] = useState("");
   const [searchedCity, setSearchedCity] = useState("");
+  // Today through a week from today, until the user picks other dates
+  const [range, setRange] = useState<DateRange>(() => defaultRange());
+  const [searchedRange, setSearchedRange] = useState<DateRange | null>(null);
   const [artistInput, setArtistInput] = useState("");
   const [artists, setArtists] = useState<PickedArtist[]>([]);
   const [concerts, setConcerts] = useState<RankedConcert[] | null>(null);
@@ -27,6 +31,9 @@ export function DiscoverPage() {
   useEffect(() => () => void runRef.current++, []);
 
   const running = progress !== null && (progress.stage === "city" || progress.stage === "concerts");
+  const today = isoDate(new Date());
+  const lastDay = maxDate(today);
+  const rangeLabel = searchedRange ? formatRange(searchedRange) : "";
 
   const addArtist = (artist: PickedArtist) => {
     if (!artist.name.trim()) return;
@@ -50,7 +57,10 @@ export function DiscoverPage() {
     const run = ++runRef.current;
     const stopped = () => run !== runRef.current;
     const cityName = city.trim();
+    const dates = clampRange(range);
+    setRange(dates);
     setSearchedCity(cityName);
+    setSearchedRange(dates);
     setError(null);
     setConcerts([]);
     setProgress({ stage: "city", city: null, pagesLoaded: 0, pagesTotal: 0, concertsTotal: 0, scoring: 0 });
@@ -63,7 +73,7 @@ export function DiscoverPage() {
         cityName,
         {
           findCity: async (query) => pickCity(await searchCities(query), query),
-          cityEvents: getCityEvents,
+          cityEvents: (cityId, page) => getCityEvents(cityId, page, dates),
           // A page's headliners together: those missing from the browser graph are
           // fetched at once, then one search from each liked artist scores them all.
           scoreMany: async (headliners) => {
@@ -127,6 +137,39 @@ export function DiscoverPage() {
             />
           </div>
 
+          <div style={styles.dates}>
+            <label style={{ ...styles.field, ...styles.dateField }}>
+              <span style={styles.label}>From</span>
+              <input
+                type="date"
+                value={range.from}
+                min={today}
+                max={lastDay}
+                onChange={(e) => {
+                  const from = e.target.value;
+                  // Keep the end on or after the start
+                  setRange((r) => ({ from, to: from && r.to < from ? from : r.to }));
+                }}
+                className="date-input"
+                style={{ ...styles.input, ...styles.dateInput }}
+                aria-label="From date"
+              />
+            </label>
+            <label style={{ ...styles.field, ...styles.dateField }}>
+              <span style={styles.label}>To</span>
+              <input
+                type="date"
+                value={range.to}
+                min={range.from || today}
+                max={lastDay}
+                onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+                className="date-input"
+                style={{ ...styles.input, ...styles.dateInput }}
+                aria-label="To date"
+              />
+            </label>
+          </div>
+
           <div style={styles.field}>
             <label style={styles.label}>Artists you like</label>
             <div style={styles.inputRow}>
@@ -182,12 +225,15 @@ export function DiscoverPage() {
 
         {error && <p style={styles.error}>{error}</p>}
 
-        {progress && <StatusLine progress={progress} found={concerts?.length ?? 0} query={searchedCity} />}
+        {progress && (
+          <StatusLine progress={progress} found={concerts?.length ?? 0} query={searchedCity} dates={rangeLabel} />
+        )}
 
         {concerts && concerts.length > 0 && (
           <div style={styles.results} aria-live="polite">
             <h2 style={styles.resultsTitle}>
-              Upcoming concerts in {progress?.city ?? searchedCity} ({concerts.length})
+              Concerts in {progress?.city ?? searchedCity} ({concerts.length})
+              <span style={styles.resultsDates}>{rangeLabel}</span>
             </h2>
             {concerts.map((c) => (
               <div key={c.id} style={styles.card}>
@@ -237,7 +283,17 @@ export function DiscoverPage() {
 }
 
 /** Where the search is: a spinner while it runs, then a summary. */
-function StatusLine({ progress, found, query }: { progress: ConcertSearchProgress; found: number; query: string }) {
+function StatusLine({
+  progress,
+  found,
+  query,
+  dates,
+}: {
+  progress: ConcertSearchProgress;
+  found: number;
+  query: string;
+  dates: string;
+}) {
   const { stage, city, pagesLoaded, pagesTotal, concertsTotal, scoring } = progress;
   const running = stage === "city" || stage === "concerts";
   const of = Math.min(concertsTotal, pagesTotal * CITY_PAGE_SIZE);
@@ -249,9 +305,10 @@ function StatusLine({ progress, found, query }: { progress: ConcertSearchProgres
     text = `${parts.join(" · ")}…`;
   } else if (stage === "stopped") text = `Stopped: ${found} of ${of} concerts in ${city ?? query}.`;
   else if (!city) text = `Couldn't find a city called "${query}" on Pollstar.`;
-  else if (found === 0) text = `No upcoming concerts in ${city}.`;
-  else if (concertsTotal > found) text = `The first ${found} of ${concertsTotal} upcoming concerts in ${city}.`;
-  else text = `All ${found} upcoming concerts in ${city}.`;
+  else if (found === 0) text = `No concerts in ${city}, ${dates}.`;
+  // Only "the first" when there were more pages than it loads (a few events have no headliner)
+  else if (concertsTotal > MAX_CITY_PAGES * CITY_PAGE_SIZE) text = `The first ${found} of ${concertsTotal} concerts in ${city}, ${dates}.`;
+  else text = `All ${found} concerts in ${city}, ${dates}.`;
   return (
     <div style={styles.status} role="status">
       {running && <span className="spinner" aria-hidden="true" />}
@@ -285,6 +342,11 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: "0.8rem", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.03em" },
   input: { padding: "0.5rem 0.75rem", borderRadius: "4px", border: "1px solid #444", background: "#2a2a2a", color: "#e0e0e0", fontSize: "16px" },
   inputRow: { display: "flex", gap: "0.5rem" },
+  dates: { display: "flex", flexWrap: "wrap", gap: "0.75rem" },
+  dateField: { flex: "1 1 140px", minWidth: 0 },
+  // The page's font, and a light calendar icon on the dark field
+  dateInput: { fontFamily: "inherit", colorScheme: "dark" },
+  resultsDates: { display: "block", fontSize: "0.8rem", fontWeight: 400, color: "#888", marginTop: "0.15rem" },
   autocomplete: { flex: 1 },
   addBtn: { padding: "0.5rem 1rem", borderRadius: "4px", border: "none", background: "#48dbfb", color: "#000", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
   chipList: { display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.25rem" },

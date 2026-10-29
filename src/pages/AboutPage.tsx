@@ -34,8 +34,9 @@ export function AboutPage() {
         <h2 style={styles.heading}>Discover</h2>
         <p style={styles.paragraph}>
           Find upcoming concerts in any city, ranked by how well each one fits your taste. Enter a
-          city and artists you like: the app finds the city on Pollstar and loads its upcoming
-          shows a page at a time, soonest first (up to the first 1,000).
+          city, the dates you're interested in (the coming week unless you pick others) and artists
+          you like: the app finds the city on Pollstar and loads its shows in those dates a page
+          at a time, soonest first (up to the first 1,000).
         </p>
         <p style={styles.paragraph}>
           Concerts appear as they're found and move into place as their headliners are scored with the

@@ -229,6 +229,11 @@ input {
     padding: 1rem !important;
   }
 
+  /* Discover: finger-sized date fields */
+  .date-input {
+    min-height: 44px;
+  }
+
   /* Scrollable pages (Home / Play / Discover / About) */
   .page-container {
     padding: 1rem 1rem max(1.5rem, env(safe-area-inset-bottom)) !important;

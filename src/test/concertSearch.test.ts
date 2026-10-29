@@ -37,10 +37,17 @@ function deps(log: string[] = []): ConcertSearchDeps {
       log.push(`page ${id}:${page}`);
       return { events: pages[page] ?? [], totalPages: pages.length, totalEvents: 5 };
     },
-    scoreMany: async (names) => {
+    scoreMany: async (names, onScore) => {
       log.push(`score ${names.join(", ")}`);
-      await new Promise((r) => setTimeout(r, 1));
-      return new Map(names.map((n) => [n, { score: SCORES[n] ?? 0, found: n in SCORES }]));
+      const out = new Map<string, { score: number; found: boolean }>();
+      // Closest first, one at a time
+      for (const n of [...names].sort((a, b) => (SCORES[b] ?? 0) - (SCORES[a] ?? 0))) {
+        await new Promise((r) => setTimeout(r, 1));
+        const s = { score: SCORES[n] ?? 0, found: n in SCORES };
+        out.set(n, s);
+        onScore(n, s);
+      }
+      return out;
     },
   };
 }
@@ -68,6 +75,24 @@ describe("streamConcerts", () => {
       ["e4", "Osees", 70],
       ["e1", "Taylor Swift", 4],
     ]);
+  });
+
+  it("moves each concert into place as soon as its headliner is scored, not when the page is", async () => {
+    const updates: ConcertSearchUpdate[] = [];
+    const d = deps();
+    // One page only, so nothing else arrives in between
+    const onePage: ConcertSearchDeps = {
+      ...d,
+      cityEvents: async (id, page) => ({ ...(await d.cityEvents(id, page)), totalPages: 1 }),
+    };
+    await streamConcerts("Berlin", onePage, (u) => updates.push(u));
+    // Osees (70) is scored before Taylor Swift (4), each in its own update
+    const partly = updates.find((u) => u.concerts.some((c) => c.scored) && u.concerts.some((c) => !c.scored))!;
+    expect(partly.concerts.map((c) => [c.artistName, c.scored])).toEqual([
+      ["Osees", true],
+      ["Taylor Swift", false],
+    ]);
+    expect(partly.progress.scoring).toBe(1);
   });
 
   it("scores a page's new headliners together, each headliner once", async () => {

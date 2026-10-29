@@ -71,6 +71,7 @@ GET https://lwqkjtzqjgacgvfjiyxg.supabase.co/functions/v1/pollstar-city?city=654
 |-------|---------|-----------|
 | `search=<city name>` | Pollstar's autocomplete (cities, venues, artists...) | `pollstar_search`, key = lowercased search |
 | `city=<id>&page=<n>` | page `n` (0–49) of the city's upcoming events, 100 a page, soonest first, today to 4 years out | `pollstar_city`, key = `<id>:<page>` |
+| `city=<id>&page=<n>&from=YYYY-MM-DD&to=YYYY-MM-DD` | the same, between those dates (`from` no earlier than yesterday, `to` on or after it and no more than 4 years out) | `pollstar_city`, key = `<id>:<from>:<to>:<page>` |
 
 Response: `{ source: "cache" | "pollstar" | "stale", fetchedAt, data }` (data is Pollstar's JSON; past events are dropped from a cached page). `503 { unavailable: true }` when Pollstar refuses and nothing is cached.
 

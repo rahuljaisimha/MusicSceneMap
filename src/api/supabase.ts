@@ -6,7 +6,13 @@ const SUPABASE_FUNCTIONS_URL = "https://lwqkjtzqjgacgvfjiyxg.supabase.co/functio
  * concert-database). Null when the function can't get it (Pollstar refusing
  * with nothing cached, or the function unreachable).
  */
-export async function pollstarViaServer<T>(params: { search?: string; city?: string; page?: string }): Promise<T | null> {
+export async function pollstarViaServer<T>(params: {
+  search?: string;
+  city?: string;
+  page?: string;
+  from?: string;
+  to?: string;
+}): Promise<T | null> {
   const qs = new URLSearchParams(
     Object.entries(params).filter((e): e is [string, string] => typeof e[1] === "string")
   );

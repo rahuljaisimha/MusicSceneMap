@@ -149,12 +149,14 @@ Similarity mode (artist-to-scene fit scoring):
           ("1.00 × 0.45 × 0.9 = 0.41 → 41")
 
 Discover (upcoming concert recommendations, streamed: concertSearch.ts streamConcerts):
-    User enters city + artists, presses Find Concerts
+    User enters city + dates (From / To date inputs, a calendar in the browser; default
+    today → +7 days, dateRange.ts: clampRange keeps from ≥ today, to ≥ from, ≤ 4 years
+    out) + artists, presses Find Concerts
         → Pollstar autocomplete for the city name (one request): pickCity takes an exact
           "City, State" match, else the most prominent city of that name ("Berlin" →
           Berlin, Germany over Berlin, MD)
-        → The city's upcoming events, CITY_PAGE_SIZE (100) a page, soonest first, today
-          to 4 years out, at most MAX_CITY_PAGES (10) pages; each page's concerts are
+        → The city's events between those dates, CITY_PAGE_SIZE (100) a page, soonest
+          first, at most MAX_CITY_PAGES (10) pages; each page's concerts are
           listed at once, unscored ("scoring")
         → Each page's new headliners are scored together alongside the requests:
           prepareArtists for the ones missing from the browser graph, then
@@ -444,7 +446,7 @@ PostgreSQL database on Supabase (free tier, 500MB). Stores the full graph + venu
 **User-requested data for concert-database** (`user_requested_data`, migration 009: source, key, data JSONB, version, fetched_at, seq; one row per (source, key)). Data the app fetches from outside sources because a user asked for something, kept so concert-database can store it like its own crawls without spending its own requests; nothing kept is about the user:
 - `setlistfm` (key = setlist id): venue-search upserts every setlist it fetches (the artist-in-city search and each venue's setlists) as setlist.fm returned it; version = its lastUpdated.
 - `pollstar` (key = Pollstar venue id; data = { venue, ...Pollstar's events response }) and `pollstar_search` (key = the lowercased venue search; Pollstar's autocomplete response): written by the `pollstar-events` function (Discover's old venue-by-venue search; `pollstar_search` rows are now written by `pollstar-city` too), which fetched Pollstar server-side for Discover's Concerts and serves every visitor from these rows while they're under 24 hours old (a venue is fetched from Pollstar at most once a day, whoever asks). When Pollstar refuses, an older row is served as stale; with nothing cached the function answers 503. The venue's name and city come from the cached search that found it, so nothing a browser sends is stored. (Migration 009's comments still describe the earlier browser-post design, replaced before it shipped.)
-- `pollstar_city` (key = "<Pollstar city id>:<page>"; Pollstar's response for that page of the city's upcoming events, 100 a page, each event with its full venue): written by the `pollstar-city` function, same 24-hour cache and stale/503 rules. concert-database has no ingest for it yet.
+- `pollstar_city` (key = "<Pollstar city id>:<page>", or "<city id>:<from>:<to>:<page>" for a date range; Pollstar's response for that page of the city's upcoming events, 100 a page, each event with its full venue): written by the `pollstar-city` function, same 24-hour cache and stale/503 rules. concert-database has no ingest for it yet.
 `seq` moves forward only when a row is added or its version changes (trigger). concert-database's `msm-requested` step (a step of every run, same read-only login as the misses) reads the rows past its last `seq` and hands each to its source's ingest. A new source: an upsert in the edge function that fetches it, plus an ingest in concert-database (rows from sources it has no ingest for are skipped).
 
 

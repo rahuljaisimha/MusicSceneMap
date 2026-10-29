@@ -31,7 +31,7 @@ import { debugLog } from "../debug/DebugLog";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Pollstar's JSON through our server, or an error when it can't get it. */
-async function viaServer<T>(params: { search?: string; city?: string; page?: string }): Promise<T> {
+async function viaServer<T>(params: { search?: string; city?: string; page?: string; from?: string; to?: string }): Promise<T> {
   const data = await pollstarViaServer<T>(params);
   if (data === null) throw new Error("Pollstar is unavailable right now. Try again in a little while.");
   return data;
@@ -202,18 +202,19 @@ export async function searchCities(query: string): Promise<PollstarCity[]> {
 }
 
 /**
- * One page (100, the function's page size) of a city's upcoming concerts,
- * soonest first, from today out to 4 years, via our pollstar-city function.
+ * One page (100, the function's page size) of a city's concerts between two
+ * dates (YYYY-MM-DD, from today on), soonest first, via our pollstar-city function.
  */
 export async function getCityEvents(
   cityId: string,
-  page: number
+  page: number,
+  range: { from: string; to: string }
 ): Promise<{ events: PollstarEvent[]; totalPages: number; totalEvents: number }> {
   return cachedFetch(
-    `pollstar_city_${cityId}_${page}`,
+    `pollstar_city_${cityId}_${range.from}_${range.to}_${page}`,
     async () => {
-      debugLog.log(`Pollstar city events: city ${cityId} page ${page}`);
-      const raw = await viaServer<RawEventsResponse>({ city: cityId, page: String(page) });
+      debugLog.log(`Pollstar city events: city ${cityId} ${range.from}..${range.to} page ${page}`);
+      const raw = await viaServer<RawEventsResponse>({ city: cityId, page: String(page), from: range.from, to: range.to });
       const events = parseEvents(raw);
       debugLog.log(`Pollstar: ${events.length} events (page ${page}) for city ${cityId}`);
       return { events, totalPages: raw.totalPages ?? 1, totalEvents: raw.totalEvents ?? events.length };

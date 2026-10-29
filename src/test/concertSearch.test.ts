@@ -94,6 +94,43 @@ describe("streamConcerts", () => {
     expect(partly.progress.scoring).toBe(1);
   });
 
+  it("puts off the headliners scoreMany leaves out until every page is in, then scores them last", async () => {
+    const log: string[] = [];
+    const d = deps(log);
+    const updates: ConcertSearchUpdate[] = [];
+    await streamConcerts(
+      "Berlin",
+      {
+        ...d,
+        // Taylor Swift needs the slow lookup
+        scoreMany: (names, onScore) => d.scoreMany(names.filter((n) => n !== "Taylor Swift"), onScore),
+        scoreLater: async (names, onScore) => {
+          log.push(`later ${names.join(", ")}`);
+          for (const n of names) onScore(n, { score: SCORES[n] ?? 0, found: true });
+        },
+      },
+      (u) => updates.push(u)
+    );
+    // Only after both pages, and after their scoring
+    expect(log.slice(log.indexOf("page 65443:1"))).toContain("later Taylor Swift");
+    expect(log[log.length - 1]).toBe("later Taylor Swift");
+    // Just before the lookup: everything else is scored, one left to look up
+    const waiting = [...updates].reverse().find((u) => u.progress.lookingUp > 0)!;
+    expect(waiting.progress).toMatchObject({ lookingUp: 1, scoring: 1 });
+    const last = updates[updates.length - 1]!;
+    expect(last.progress).toMatchObject({ stage: "done", scoring: 0, lookingUp: 0 });
+    expect(last.concerts.find((c) => c.artistName === "Taylor Swift")).toMatchObject({ scored: true, score: 4 });
+  });
+
+  it("scores the left-out headliners 0 when there's no scoreLater", async () => {
+    const d = deps();
+    const updates: ConcertSearchUpdate[] = [];
+    await streamConcerts("Berlin", { ...d, scoreMany: (names, onScore) => d.scoreMany(names.filter((n) => n !== "Taylor Swift"), onScore) }, (u) =>
+      updates.push(u)
+    );
+    expect(updates[updates.length - 1]!.concerts.find((c) => c.artistName === "Taylor Swift")).toMatchObject({ scored: true, score: 0, artistFound: false });
+  });
+
   it("scores a page's new headliners together, each headliner once", async () => {
     const log: string[] = [];
     await streamConcerts("Berlin", deps(log), () => {});
@@ -172,7 +209,7 @@ describe("sortConcerts", () => {
 });
 
 describe("searchProgress", () => {
-  const base = { stage: "concerts" as const, city: "Berlin, Germany", pagesLoaded: 1, pagesTotal: 2, concertsTotal: 150, scoring: 0 };
+  const base = { stage: "concerts" as const, city: "Berlin, Germany", pagesLoaded: 1, pagesTotal: 2, concertsTotal: 150, scoring: 0, lookingUp: 0 };
   const scored = (n: number, of: number) =>
     Array.from({ length: of }, (_, i) => toConcert(ev(`e${i}`, `A${i}`, "2027-01-01"), `A${i}`, i < n ? { score: 1, found: true } : undefined));
   it("moves with the pages loaded and the concerts scored, and ends at 1", () => {

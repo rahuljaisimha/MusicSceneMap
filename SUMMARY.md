@@ -159,7 +159,8 @@ Discover (upcoming concert recommendations, streamed: concertSearch.ts streamCon
           first, at most MAX_CITY_PAGES (10) pages; each page's concerts are
           listed at once, unscored ("scoring")
         → Each page's new headliners are scored together alongside the requests:
-          prepareArtists for the ones missing from the browser graph, then
+          prepareArtists(…, { musicBrainz: false }) for the ones missing from the
+          browser graph (Postgres only), then
           scoreArtistsAgainstList (one search from each liked artist to all of them,
           run SCORE_STEP (400) artists at a time in turn as PathSearch steps, yielding
           to the browser between; a headliner is scored, aggregateScore, and its
@@ -168,8 +169,13 @@ Discover (upcoming concert recommendations, streamed: concertSearch.ts streamCon
           each headliner once, cached on the page per liked-artist list. The list
           re-sorts after each page (sortConcerts: scored by score then date, then
           unscored by date)
+        → Headliners neither the browser graph nor Postgres has are put off
+          (scoreLater): once every page is in and scored, they're looked up on
+          MusicBrainz one at a time (its ~1 request/second limit; tieredGraphAccess
+          doesn't remember a Postgres-only miss, so it asks MusicBrainz then) and scored;
+          the status line says "looking up N more artists on MusicBrainz"
         → While it runs the Find Concerts button becomes Stop with a progress bar inside
-          (searchProgress: pages loaded × concerts scored) and a status line ("Berlin,
+          (searchProgress: pages loaded × concerts scored) and a spinner + status line ("Berlin,
           Germany: 300 of 592 concerts · scoring 64 artists…"); Stop (or a new search,
           or leaving the page) ends the run
         → Cards: headliner + score, "Support from: ..." (the rest of the bill), date ·

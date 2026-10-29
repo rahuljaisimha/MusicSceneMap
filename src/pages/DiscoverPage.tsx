@@ -79,7 +79,7 @@ export function DiscoverPage() {
     setError(null);
     setConcerts([]);
     setOpenId(null);
-    setProgress({ stage: "city", city: null, pagesLoaded: 0, pagesTotal: 0, concertsTotal: 0, scoring: 0 });
+    setProgress({ stage: "city", city: null, pagesLoaded: 0, pagesTotal: 0, concertsTotal: 0, scoring: 0, lookingUp: 0 });
 
     const liked = artists.map(pickedKey).sort().join(",");
     try {
@@ -104,14 +104,32 @@ export function DiscoverPage() {
               return !cached;
             });
             if (todo.length === 0) return scores;
-            await tiered.prepareArtists(todo);
+            // The browser graph and Postgres only: MusicBrainz (about one request a
+            // second) is left for scoreLater, after every page is in
+            await tiered.prepareArtists(todo, { musicBrainz: false });
             await yieldToBrowser();
-            await scoreArtistsAgainstList(tiered.build(), todo, artists, yieldToBrowser, (h, s) => {
+            const graph = tiered.build();
+            const known = todo.filter((h) => graph.findNodeByName(h));
+            await scoreArtistsAgainstList(graph, known, artists, yieldToBrowser, (h, s) => {
               scores.set(h, s);
               scoreCache.current.set(`${liked}|${h.toLowerCase()}`, s);
               onScore(h, s);
             });
             return scores;
+          },
+          // Headliners neither graph has, last and one at a time: MusicBrainz is paced
+          scoreLater: async (headliners, onScore, isStopped) => {
+            for (const h of headliners) {
+              if (isStopped()) return;
+              await tiered.prepareArtists([h]);
+              const graph = tiered.build();
+              const done = (s: { score: number; found: boolean }) => {
+                scoreCache.current.set(`${liked}|${h.toLowerCase()}`, s);
+                onScore(h, s);
+              };
+              if (!graph.findNodeByName(h)) done({ score: 0, found: false });
+              else await scoreArtistsAgainstList(graph, [h], artists, yieldToBrowser, (_, s) => done(s));
+            }
           },
         },
         (update) => {
@@ -375,13 +393,16 @@ function StatusLine({
   query: string;
   dates: string;
 }) {
-  const { stage, city, pagesLoaded, pagesTotal, concertsTotal, scoring } = progress;
+  const { stage, city, pagesLoaded, pagesTotal, concertsTotal, scoring, lookingUp } = progress;
+  const running = stage === "city" || stage === "concerts";
   const of = Math.min(concertsTotal, pagesTotal * CITY_PAGE_SIZE);
   let text: string;
   if (stage === "city") text = `Looking up ${query}…`;
   else if (stage === "concerts") {
     const parts = [pagesLoaded === 0 ? `${city}: loading concerts` : `${city}: ${found} of ${of} concerts`];
-    if (scoring > 0) parts.push(`scoring ${scoring} artist${scoring === 1 ? "" : "s"}`);
+    const now = scoring - lookingUp;
+    if (now > 0) parts.push(`scoring ${now} artist${now === 1 ? "" : "s"}`);
+    else if (lookingUp > 0) parts.push(`looking up ${lookingUp} more artist${lookingUp === 1 ? "" : "s"} on MusicBrainz`);
     text = `${parts.join(" · ")}…`;
   } else if (stage === "stopped") text = `Stopped: ${found} of ${of} concerts in ${city ?? query}.`;
   else if (!city) text = `Couldn't find a city called "${query}" on Pollstar.`;
@@ -391,7 +412,8 @@ function StatusLine({
   else text = `All ${found} concerts in ${city}, ${dates}.`;
   return (
     <div style={styles.status} role="status">
-      {text}
+      {running && <span className="spinner" aria-hidden="true" />}
+      <span>{text}</span>
     </div>
   );
 }

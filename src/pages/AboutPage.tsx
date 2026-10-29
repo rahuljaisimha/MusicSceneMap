@@ -33,16 +33,15 @@ export function AboutPage() {
 
         <h2 style={styles.heading}>Discover</h2>
         <p style={styles.paragraph}>
-          Find venues in any city based on artists you like. Enter a city and your favorite
-          artists — the app finds venues where they've performed, then automatically expands to
-          related groups for richer recommendations. Data comes from Setlist.fm and is cached
-          for future queries.
+          Find upcoming concerts in any city, ranked by how well each one fits your taste. Enter a
+          city and artists you like: the app finds the city on Pollstar and loads its upcoming
+          shows a page at a time, soonest first (up to the first 1,000).
         </p>
         <p style={styles.paragraph}>
-          Toggle to <strong>Concerts</strong> to see upcoming shows at the city's top venues,
-          ranked by how well each concert's artist fits your taste — reusing the same graph-based
-          similarity scoring. Upcoming event data comes from Pollstar (fetched live in your browser
-          and cached for 24 hours). Artists not yet in the graph are shown but ranked lowest.
+          Concerts appear as they're found and move into place as their headliners are scored with the
+          same graph-based similarity as the Similarity page. A spinner shows it's still searching,
+          and Stop ends the search with what it has found so far. Artists not yet in the graph are
+          shown but ranked lowest.
         </p>
 
         <h2 style={styles.heading}>Similarity Score</h2>

@@ -31,19 +31,5 @@ export default defineConfig(({ mode }) => {
       // Inlined at build; read in src/db/graphDb.ts.
       __GRAPH_DB_CDN_URL__: JSON.stringify(graphDbCdnUrl),
     },
-    server: {
-      proxy: {
-        "/pollstar-ac": {
-          target: "https://autocomplete.pollstar.com",
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/pollstar-ac/, ""),
-        },
-        "/pollstar-api": {
-          target: "https://www.pollstar.com",
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/pollstar-api/, ""),
-        },
-      },
-    },
   };
 });

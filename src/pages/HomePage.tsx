@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 export const HOME_LINKS = [
   { to: "/explore", label: "Explore", description: "Explore the graph. Search artists and walk through their network." },
   { to: "/play", label: "Play", description: "Six Degrees of Music: connect two artists through the bands they share, in as few moves as you can." },
-  { to: "/discover", label: "Discover", description: "Find venues and upcoming concerts in a city, ranked by how well they fit the artists you like." },
+  { to: "/discover", label: "Discover", description: "Find upcoming concerts in a city, ranked by how well they fit the artists you like." },
   { to: "/similarity", label: "Similarity", description: "Score how close any artist is to a list of artists you love, and see the connections behind the score." },
   { to: "/about", label: "About", description: "How it works and where the data comes from." },
 ];

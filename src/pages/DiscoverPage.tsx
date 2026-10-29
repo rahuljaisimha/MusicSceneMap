@@ -1,25 +1,32 @@
-import { useState } from "react";
-import { searchVenuesForArtists, searchVenuesByMbid, type VenueResult } from "../api/supabase";
-import { searchVenues as pollstarSearchVenues, getUpcomingEvents, type PollstarEvent } from "../api/pollstar";
+import { useEffect, useRef, useState } from "react";
+import { searchCities, getCityEvents } from "../api/pollstar";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
-import { rankConcerts, dedupeEvents, headlineArtist, type RankedConcert } from "./concerts";
+import { scoreArtistsAgainstList } from "./similarity";
+import { CITY_PAGE_SIZE, pickCity, streamConcerts, type ConcertSearchProgress } from "./concertSearch";
+import type { RankedConcert } from "./concerts";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { addPicked, chipLabel, fromSuggestion, pickedKey, type PickedArtist } from "./pickedArtists";
 
-type DiscoverMode = "venues" | "concerts";
-
-/** How many top venues to pull concerts from. */
-const CONCERT_VENUE_LIMIT = 8;
+/** Lets the browser draw (and handle Stop) between scores: each one runs on the main thread. */
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 export function DiscoverPage() {
-  const [mode, setMode] = useState<DiscoverMode>("venues");
   const [city, setCity] = useState("");
+  const [searchedCity, setSearchedCity] = useState("");
   const [artistInput, setArtistInput] = useState("");
   const [artists, setArtists] = useState<PickedArtist[]>([]);
-  const [results, setResults] = useState<Array<VenueResult & { artists: string[] }> | null>(null);
   const [concerts, setConcerts] = useState<RankedConcert[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<ConcertSearchProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Each search is a run; Stop (or a new search, or leaving the page) ends the current one.
+  const runRef = useRef(0);
+  // Headliner scores by liked-artist list, kept across searches on this page
+  const scoreCache = useRef(new Map<string, { score: number; found: boolean }>());
+  useEffect(() => () => void runRef.current++, []);
+
+  const running = progress !== null && (progress.stage === "city" || progress.stage === "concerts");
 
   const addArtist = (artist: PickedArtist) => {
     if (!artist.name.trim()) return;
@@ -33,238 +40,76 @@ export function DiscoverPage() {
     setArtists(artists.filter((a) => pickedKey(a) !== pickedKey(artist)));
   };
 
-  const handleSearch = async () => {
-    if (!city.trim() || artists.length === 0) return;
-    setLoading(true);
-    setError(null);
-    setResults(null);
-
-    const cityName = city.trim();
-
-    try {
-      // Phase 1: Search for the artists the user typed (immediate results)
-      const directResults = await searchVenuesForArtists(artists, cityName);
-      setResults(directResults);
-      setLoading(false);
-
-      // Phase 2: Find connected bands via BFS over the graph. Doesn't wait for
-      // the graph download: until it's loaded, graphSource asks the server.
-      const { isDbLoaded } = await import("../db/graphDb");
-      const { findArtist, findArtistById, getArtistNeighbors } = await import("../db/graphSource");
-      const { reportMiss } = await import("../api/supabase");
-
-      // Captured before the lookups: if they went to the server, their misses
-      // say nothing about SQLite coverage, even if the download finishes meanwhile.
-      const lookedUpLocally = isDbLoaded();
-      // A picked artist by its MusicBrainz ID (several can share a name); a typed one by name.
-      const startNodes = await Promise.all(
-        artists.map((a) => (a.id ? findArtistById(a.id) : findArtist(a.name)).catch(() => null))
-      );
-
-      // Report artists missing from SQLite (for future SQLite updates). Only
-      // when checked against the local graph; skipped while it's downloading.
-      if (lookedUpLocally) {
-        artists.forEach((artist, i) => {
-          if (!startNodes[i]) reportMiss(artist.id ?? artist.name, "sqlite-missing");
-        });
-      }
-
-      const connectedBands: Array<{ name: string; mbid: string }> = [];
-      const visited = new Set<string>();
-      const queue: string[] = [];
-
-      // Start BFS from user's artists
-      for (const node of startNodes) {
-        if (node && !visited.has(node.id)) {
-          visited.add(node.id);
-          queue.push(node.id);
-        }
-      }
-
-      // BFS until we find 5 groups. While the graph is still downloading each
-      // step is a server request, so cap how many nodes those expand.
-      const MAX_REMOTE_EXPANSIONS = 30;
-      let remoteExpansions = 0;
-      while (queue.length > 0 && connectedBands.length < 5) {
-        if (!isDbLoaded() && remoteExpansions++ >= MAX_REMOTE_EXPANSIONS) break;
-        const nodeId = queue.shift()!;
-        const neighbors = await getArtistNeighbors(nodeId).catch(() => []);
-
-        for (const { node: neighbor, relType } of neighbors) {
-          if (visited.has(neighbor.id)) continue;
-          if (neighbor.type === "album") continue;
-          if (relType !== "member_of" && relType !== "former_member_of" && relType !== "support_musician") continue;
-
-          visited.add(neighbor.id);
-          queue.push(neighbor.id);
-
-          if (neighbor.type === "group" && !artists.some((a) => a.name === neighbor.name)) {
-            connectedBands.push({ name: neighbor.name, mbid: neighbor.id });
-            if (connectedBands.length >= 5) break;
-          }
-        }
-      }
-
-      if (connectedBands.length === 0) return;
-
-      // Phase 2: Fetch venues for connected bands by MBID (in batches of 5)
-      const bands = connectedBands;
-      const batchSize = 5;
-
-      for (let i = 0; i < bands.length; i += batchSize) {
-        const batch = bands.slice(i, i + batchSize);
-        const batchPromises = batch.map((b) =>
-          searchVenuesByMbid(b.mbid, cityName).then((r) => ({ ...r, artistName: b.name }))
-        );
-        const batchSettled = await Promise.allSettled(batchPromises);
-
-        const batchVenues: Array<VenueResult & { artists: string[] }> = [];
-        for (const result of batchSettled) {
-          if (result.status !== "fulfilled") continue;
-          const { venues, artistName } = result.value;
-          for (const v of venues) {
-            batchVenues.push({ ...v, artists: [artistName] });
-          }
-        }
-
-        // Merge with existing results
-        setResults((prev) => {
-          if (!prev) return batchVenues;
-          const merged = new Map<string, (typeof prev)[0]>();
-
-          // Add existing
-          for (const v of prev) {
-            merged.set(v.venue, { ...v });
-          }
-
-          // Merge new
-          for (const v of batchVenues) {
-            const existing = merged.get(v.venue);
-            if (existing) {
-              existing.showCount += v.showCount;
-              for (const a of v.artists) {
-                if (!existing.artists.includes(a)) {
-                  existing.artists.push(a);
-                }
-              }
-            } else {
-              merged.set(v.venue, { ...v });
-            }
-          }
-
-          return [...merged.values()].sort((a, b) => b.showCount - a.showCount);
-        });
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-      setLoading(false);
-    }
-  };
-
   /**
-   * Concerts flow: find the top venues in the city (reusing the venue search),
-   * resolve each to a Pollstar venue, fetch upcoming events, and rank every
-   * concert by how similar its headline artist is to the user's list.
-   * Pollstar requests are paced ~1/sec inside the client; the first fires ASAP.
+   * The city on Pollstar → its upcoming concerts a page at a time (requests are
+   * paced) → each page listed as soon as it arrives, then moved into place once
+   * its headliners are scored.
    */
   const handleFindConcerts = async () => {
-    if (!city.trim() || artists.length === 0) return;
-    setLoading(true);
-    setError(null);
-    setConcerts(null);
-
+    if (!city.trim() || artists.length === 0 || running) return;
+    const run = ++runRef.current;
+    const stopped = () => run !== runRef.current;
     const cityName = city.trim();
+    setSearchedCity(cityName);
+    setError(null);
+    setConcerts([]);
+    setProgress({ stage: "city", city: null, pagesLoaded: 0, pagesTotal: 0, concertsTotal: 0, scoring: 0 });
 
+    const liked = artists.map(pickedKey).sort().join(",");
     try {
-      // 1. Top venues in the city (from the existing Setlist.fm-backed search).
-      const venueResults = await searchVenuesForArtists(artists, cityName);
-      const topVenueNames = venueResults.slice(0, CONCERT_VENUE_LIMIT).map((v) => v.venue);
-
-      // 2. Resolve each venue name to a Pollstar venue in the same city.
-      const cityLower = cityName.toLowerCase();
-      const pollstarVenueIds = new Map<string, string>(); // id -> the venue search that found it (dedupe)
-      for (const name of topVenueNames) {
-        try {
-          const matches = await pollstarSearchVenues(name);
-          const inCity = matches.find(
-            (m) => (m.city ?? "").toLowerCase() === cityLower || (m.location ?? "").toLowerCase().includes(cityLower)
-          );
-          const chosen = inCity ?? matches[0];
-          if (chosen && !pollstarVenueIds.has(chosen.id)) {
-            pollstarVenueIds.set(chosen.id, name);
-          }
-        } catch {
-          // Skip venues Pollstar can't resolve.
-        }
-      }
-
-      if (pollstarVenueIds.size === 0) {
-        setConcerts([]);
-        setLoading(false);
-        return;
-      }
-
-      // 3. Fetch upcoming events for each resolved venue.
-      const allEvents: PollstarEvent[] = [];
-      for (const [venueId, search] of pollstarVenueIds) {
-        try {
-          const events = await getUpcomingEvents(venueId, { search });
-          allEvents.push(...events);
-        } catch {
-          // Skip venues whose events fail to load.
-        }
-      }
-
-      // 4. Rank by headline-artist similarity to the taste list (graph-based).
-      const events = dedupeEvents(allEvents);
       const tiered = await buildTieredGraphAccess();
-      // Prefetch out-of-core artists (concert headliners are often small artists
-      // missing from the core graph) plus the user's list, via Tier 2/3.
-      const headliners = events
-        .map((e) => headlineArtist(e))
-        .filter((n): n is string => Boolean(n));
-      await tiered.prepareArtists([...artists, ...headliners]);
-      const ranked = rankConcerts(tiered.build(), events, artists);
-      setConcerts(ranked);
-      setLoading(false);
+      await tiered.prepareArtists(artists);
+      await streamConcerts(
+        cityName,
+        {
+          findCity: async (query) => pickCity(await searchCities(query), query),
+          cityEvents: getCityEvents,
+          // A page's headliners together: those missing from the browser graph are
+          // fetched at once, then one search from each liked artist scores them all.
+          scoreMany: async (headliners) => {
+            const scores = new Map<string, { score: number; found: boolean }>();
+            const todo = headliners.filter((h) => {
+              const cached = scoreCache.current.get(`${liked}|${h.toLowerCase()}`);
+              if (cached) scores.set(h, cached);
+              return !cached;
+            });
+            if (todo.length === 0) return scores;
+            await tiered.prepareArtists(todo);
+            await yieldToBrowser();
+            const fresh = await scoreArtistsAgainstList(tiered.build(), todo, artists, yieldToBrowser);
+            for (const [h, s] of fresh) {
+              scores.set(h, s);
+              scoreCache.current.set(`${liked}|${h.toLowerCase()}`, s);
+            }
+            return scores;
+          },
+        },
+        (update) => {
+          setConcerts(update.concerts);
+          setProgress(update.progress);
+        },
+        stopped
+      );
     } catch (e) {
+      if (stopped()) return;
       setError(e instanceof Error ? e.message : "Unknown error");
-      setLoading(false);
+      setProgress((p) => (p ? { ...p, stage: "done" } : p));
     }
   };
 
-  const handleSubmit = () => {
-    if (mode === "venues") handleSearch();
-    else handleFindConcerts();
+  const handleStop = () => {
+    runRef.current++;
+    setProgress((p) => (p ? { ...p, stage: "stopped" } : p));
   };
 
   return (
     <div style={styles.page}>
       <div className="page-container" style={styles.container}>
         <div style={styles.header}>
-          <h1 className="page-title" style={styles.title}>{mode === "venues" ? "Discover Venues" : "Discover Concerts"}</h1>
+          <h1 className="page-title" style={styles.title}>Discover Concerts</h1>
           <p style={styles.subtitle}>
-            {mode === "venues"
-              ? "Find venues in a city based on artists you like."
-              : "Find upcoming concerts at a city's top venues, ranked by how well the artist fits your taste."}
+            Find upcoming concerts in a city, ranked by how well the artist fits your taste.
           </p>
-        </div>
-
-        <div style={styles.toggle}>
-          <button
-            type="button"
-            onClick={() => setMode("venues")}
-            style={{ ...styles.toggleBtn, ...(mode === "venues" ? styles.toggleActive : {}) }}
-          >
-            Venues
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("concerts")}
-            style={{ ...styles.toggleBtn, ...(mode === "concerts" ? styles.toggleActive : {}) }}
-          >
-            Concerts
-          </button>
         </div>
 
         <div style={styles.form}>
@@ -274,13 +119,16 @@ export function DiscoverPage() {
               type="text"
               value={city}
               onChange={(e) => setCity(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleFindConcerts();
+              }}
               placeholder="e.g. Los Angeles, London, Melbourne"
               style={styles.input}
             />
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Artists</label>
+            <label style={styles.label}>Artists you like</label>
             <div style={styles.inputRow}>
               <ArtistAutocomplete
                 value={artistInput}
@@ -292,12 +140,7 @@ export function DiscoverPage() {
                 wrapperStyle={styles.autocomplete}
                 ariaLabel="Add an artist"
               />
-              <button
-                type="button"
-                onClick={handleAddArtist}
-                disabled={!artistInput.trim()}
-                style={styles.addBtn}
-              >
+              <button type="button" onClick={handleAddArtist} disabled={!artistInput.trim()} style={styles.addBtn}>
                 Add
               </button>
             </div>
@@ -321,61 +164,44 @@ export function DiscoverPage() {
             )}
           </div>
 
-          <button
-            onClick={handleSubmit}
-            disabled={loading || !city.trim() || artists.length === 0}
-            style={styles.searchBtn}
-          >
-            {loading
-              ? mode === "venues" ? "Searching…" : "Finding concerts…"
-              : mode === "venues" ? "Find Venues" : "Find Concerts"}
-          </button>
+          {running ? (
+            <button type="button" onClick={handleStop} className="discover-stop" style={styles.stopBtn}>
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleFindConcerts}
+              disabled={!city.trim() || artists.length === 0}
+              style={styles.searchBtn}
+            >
+              Find Concerts
+            </button>
+          )}
         </div>
 
         {error && <p style={styles.error}>{error}</p>}
 
-        {mode === "venues" && results && results.length === 0 && (
-          <p style={styles.noResults}>No venues found for these artists in {city}.</p>
-        )}
+        {progress && <StatusLine progress={progress} found={concerts?.length ?? 0} query={searchedCity} />}
 
-        {mode === "venues" && results && results.length > 0 && (
-          <div style={styles.results}>
+        {concerts && concerts.length > 0 && (
+          <div style={styles.results} aria-live="polite">
             <h2 style={styles.resultsTitle}>
-              Venues in {city} ({results.length})
-            </h2>
-            {results.map((v, i) => (
-              <div key={`${v.venue}-${i}`} style={styles.venueCard}>
-                <div style={styles.venueHeader}>
-                  <span style={styles.venueName}>{v.venue}</span>
-                  <span style={styles.showCount}>{v.showCount} shows</span>
-                </div>
-                <div style={styles.venueArtists}>
-                  {v.artists.map((a) => (
-                    <span key={a} style={styles.artistTag}>{a}</span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {mode === "concerts" && concerts && concerts.length === 0 && (
-          <p style={styles.noResults}>No upcoming concerts found at {city}'s top venues.</p>
-        )}
-
-        {mode === "concerts" && concerts && concerts.length > 0 && (
-          <div style={styles.results}>
-            <h2 style={styles.resultsTitle}>
-              Upcoming concerts in {city} ({concerts.length})
+              Upcoming concerts in {progress?.city ?? searchedCity} ({concerts.length})
             </h2>
             {concerts.map((c) => (
-              <div key={c.id} style={styles.venueCard}>
-                <div style={styles.venueHeader}>
-                  <span style={styles.venueName}>{c.artistName}</span>
-                  {c.artistFound ? (
-                    <span style={{ ...styles.showCount, color: scoreColor(c.score) }}>
-                      {c.score}% match
+              <div key={c.id} style={styles.card}>
+                <div style={styles.cardHeader}>
+                  <span style={styles.cardName}>{c.artistName}</span>
+                  {!c.scored && running ? (
+                    <span style={styles.scoring}>
+                      <span className="spinner spinner-small" aria-hidden="true" />
+                      scoring
                     </span>
+                  ) : !c.scored ? (
+                    <span style={styles.notFound}>not scored</span>
+                  ) : c.artistFound ? (
+                    <span style={{ ...styles.match, color: scoreColor(c.score) }}>{c.score}% match</span>
                   ) : (
                     <span style={styles.notFound}>not in graph</span>
                   )}
@@ -385,7 +211,7 @@ export function DiscoverPage() {
                   {c.isFestival ? " · Festival" : ""}
                 </div>
                 {c.supportingArtists.length > 0 && (
-                  <div style={styles.venueArtists}>
+                  <div style={styles.tags}>
                     {c.supportingArtists.slice(0, 6).map((a) => (
                       <span key={a} style={styles.artistTag}>{a}</span>
                     ))}
@@ -394,14 +220,9 @@ export function DiscoverPage() {
                 {c.tickets.length > 0 && (
                   <div style={styles.ticketRow}>
                     {c.tickets.map((t, ti) => (
-                      <a
-                        key={ti}
-                        href={t.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={styles.ticketLink}
-                      >
-                        {t.name}{t.time ? ` · ${t.time}` : ""}
+                      <a key={ti} href={t.url} target="_blank" rel="noreferrer" style={styles.ticketLink}>
+                        {t.name}
+                        {t.time ? ` · ${t.time}` : ""}
                       </a>
                     ))}
                   </div>
@@ -411,6 +232,30 @@ export function DiscoverPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Where the search is: a spinner while it runs, then a summary. */
+function StatusLine({ progress, found, query }: { progress: ConcertSearchProgress; found: number; query: string }) {
+  const { stage, city, pagesLoaded, pagesTotal, concertsTotal, scoring } = progress;
+  const running = stage === "city" || stage === "concerts";
+  const of = Math.min(concertsTotal, pagesTotal * CITY_PAGE_SIZE);
+  let text: string;
+  if (stage === "city") text = `Looking up ${query}…`;
+  else if (stage === "concerts") {
+    const parts = [pagesLoaded === 0 ? `${city}: loading concerts` : `${city}: ${found} of ${of} concerts`];
+    if (scoring > 0) parts.push(`scoring ${scoring} artist${scoring === 1 ? "" : "s"}`);
+    text = `${parts.join(" · ")}…`;
+  } else if (stage === "stopped") text = `Stopped: ${found} of ${of} concerts in ${city ?? query}.`;
+  else if (!city) text = `Couldn't find a city called "${query}" on Pollstar.`;
+  else if (found === 0) text = `No upcoming concerts in ${city}.`;
+  else if (concertsTotal > found) text = `The first ${found} of ${concertsTotal} upcoming concerts in ${city}.`;
+  else text = `All ${found} upcoming concerts in ${city}.`;
+  return (
+    <div style={styles.status} role="status">
+      {running && <span className="spinner" aria-hidden="true" />}
+      <span>{text}</span>
     </div>
   );
 }
@@ -431,13 +276,6 @@ function scoreColor(score: number): string {
 
 const styles: Record<string, React.CSSProperties> = {
   page: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
-  toggle: { display: "flex", gap: "0.25rem", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", padding: "0.25rem" },
-  toggleBtn: { padding: "0.4rem 1.1rem", borderRadius: "4px", border: "none", background: "transparent", color: "#888", fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" },
-  toggleActive: { background: "#ff6b6b", color: "#fff" },
-  notFound: { fontSize: "0.72rem", color: "#636e72", fontStyle: "italic" },
-  concertMeta: { fontSize: "0.8rem", color: "#aaa", marginBottom: "0.4rem" },
-  ticketRow: { display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.5rem" },
-  ticketLink: { fontSize: "0.75rem", color: "#48dbfb", textDecoration: "none", border: "1px solid rgba(72, 219, 251, 0.3)", borderRadius: "10px", padding: "0.15rem 0.6rem" },
   container: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "1.5rem", overflowY: "auto", gap: "1.25rem" },
   header: { textAlign: "center" },
   title: { fontSize: "1.6rem", fontWeight: 700, color: "#e0e0e0", marginBottom: "0.25rem" },
@@ -452,15 +290,21 @@ const styles: Record<string, React.CSSProperties> = {
   chipList: { display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.25rem" },
   chip: { display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.2rem 0.6rem", borderRadius: "12px", background: "#2a2a2a", color: "#e0e0e0", fontSize: "0.8rem", border: "1px solid #444" },
   chipRemove: { background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: "1rem", lineHeight: 1, padding: 0 },
-  searchBtn: { padding: "0.6rem 1.25rem", borderRadius: "4px", border: "none", background: "#ff6b6b", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" },
+  searchBtn: { padding: "0.6rem 1.25rem", minHeight: "44px", borderRadius: "4px", border: "none", background: "#ff6b6b", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" },
+  stopBtn: { padding: "0.6rem 1.25rem", minHeight: "44px", borderRadius: "4px", border: "1px solid #ff6b6b", background: "transparent", color: "#ff6b6b", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" },
   error: { color: "#ff6b6b", fontSize: "0.85rem" },
-  noResults: { color: "#888", fontSize: "0.9rem" },
+  status: { display: "flex", alignItems: "center", gap: "0.6rem", color: "#aaa", fontSize: "0.85rem", width: "100%", maxWidth: "450px" },
   results: { width: "100%", maxWidth: "450px" },
   resultsTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e0", marginBottom: "0.75rem" },
-  venueCard: { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", padding: "0.75rem", marginBottom: "0.5rem" },
-  venueHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" },
-  venueName: { fontWeight: 600, color: "#e0e0e0", fontSize: "0.95rem" },
-  showCount: { color: "#55efc4", fontSize: "0.8rem", fontWeight: 600 },
-  venueArtists: { display: "flex", flexWrap: "wrap", gap: "0.3rem" },
+  card: { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", padding: "0.75rem", marginBottom: "0.5rem" },
+  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" },
+  cardName: { fontWeight: 600, color: "#e0e0e0", fontSize: "0.95rem", minWidth: 0, overflowWrap: "anywhere" },
+  match: { fontSize: "0.8rem", fontWeight: 600, whiteSpace: "nowrap" },
+  scoring: { display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.72rem", color: "#888", whiteSpace: "nowrap" },
+  notFound: { fontSize: "0.72rem", color: "#636e72", fontStyle: "italic", whiteSpace: "nowrap" },
+  concertMeta: { fontSize: "0.8rem", color: "#aaa", marginBottom: "0.4rem" },
+  tags: { display: "flex", flexWrap: "wrap", gap: "0.3rem" },
   artistTag: { padding: "0.15rem 0.5rem", borderRadius: "10px", fontSize: "0.7rem", background: "rgba(254, 202, 87, 0.15)", color: "#feca57", border: "1px solid rgba(254, 202, 87, 0.3)" },
+  ticketRow: { display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.5rem" },
+  ticketLink: { fontSize: "0.75rem", color: "#48dbfb", textDecoration: "none", border: "1px solid rgba(72, 219, 251, 0.3)", borderRadius: "10px", padding: "0.15rem 0.6rem" },
 };

@@ -137,7 +137,12 @@ Similarity mode (artist-to-scene fit scoring):
         → Pair score = 100 x e^(-path length) = the shortest path's (damped) weights
           multiplied x 0.9 per hop after the second. One Dijkstra search from the
           compared artist finds the strongest path to every liked artist (strongestPaths):
-          at most MAX_HOPS (6) hops, paths under MIN_STRENGTH (a score of 5) dropped,
+          at most MAX_HOPS (6) hops; a pair under MIN_STRENGTH (a score of 2) scores 0, and the
+          Similarity page (computeSimilarity closest: true) searches down to PATH_MIN_STRENGTH
+          (0.001) so it still shows that pair's closest connection, and searches any pair
+          under RECHECK_BELOW (0.05) again from the liked artist's end, keeping the stronger
+          path: a search from a hub can use up MAX_EXPANDED before it reaches a small artist
+          (ranking does neither);
           at most MAX_EXPANDED (10,000) artists expanded. graphDb.getNeighbors keeps its
           two prepared statements for the search's thousands of calls
         → Overall = best pair + a diminishing bonus for every other pair scoring >= 60

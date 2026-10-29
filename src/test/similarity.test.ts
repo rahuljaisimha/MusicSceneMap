@@ -17,6 +17,8 @@ import {
   relDistance,
   HOP_DAMPING,
   MAX_HOPS,
+  MIN_STRENGTH,
+  strengthScore,
   type GraphAccess,
   type SimNode,
   type SimNeighbor,
@@ -527,5 +529,73 @@ describe("repeats (song credits, shows)", () => {
     expect(session.path![0]).toMatchObject({ count: 10 });
     expect(session.path![0]!.baseWeight).toBeCloseTo(repeatWeight("collaborated_with", 10));
     expect(computeSimilarity(g, "Opener", ["Headliner"]).pairs[0]!.score).toBe(90);
+  });
+});
+
+describe("weak paths", () => {
+  /** Fan played on Mid's records; Mid played on two big stars' records: Star (300 collaborators) and Mega (1,400). */
+  function weakGraph(): GraphAccess {
+    const n = (id: string): SimNode => ({ id, name: id, type: "person" });
+    const edges: Array<[string, string]> = [["Fan", "Mid"], ["Mid", "Star"], ["Mid", "Mega"]];
+    const degrees: Record<string, number> = { Star: 300, Mega: 1400 };
+    return {
+      findNodeByName: (name) => n(name),
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t] of edges) {
+          if (s === id) out.push({ node: n(t), relType: "collaborated_with", outgoing: true });
+          if (t === id) out.push({ node: n(s), relType: "collaborated_with", outgoing: false });
+        }
+        return out;
+      },
+      degree: (id) => degrees[id] ?? 2,
+    };
+  }
+
+  it("scores 0 under MIN_STRENGTH (a score of 2)", () => {
+    expect(MIN_STRENGTH).toBe(0.02);
+    expect(strengthScore(0.0199)).toBe(0);
+    expect(strengthScore(0.02)).toBe(2);
+    expect(strengthScore(0.026)).toBe(3);
+  });
+
+  it("scores a path between 2 and 5 instead of dropping it", () => {
+    // 0.8 x 0.8 x 14/300 = 0.03
+    const star = computeSimilarity(weakGraph(), "Star", ["Fan"]).pairs[0]!;
+    expect(star.strength).toBeCloseTo(0.8 * 0.8 * (14 / 300));
+    expect(star.score).toBe(3);
+  });
+
+  it("still finds the closest connection of a pair scoring 0 when asked to look further", () => {
+    // 0.8 x 0.8 x 14/1400 = 0.0064: scores 0
+    const deep = computeSimilarity(weakGraph(), "Mega", ["Fan"], { closest: true }).pairs[0]!;
+    expect(deep.score).toBe(0);
+    expect(deep.strength).toBeCloseTo(0.0064);
+    expect(deep.path!.map((s) => s.to.name)).toEqual(["Mid", "Mega"]);
+    // Ranking (the default) doesn't look that far
+    const ranked = computeSimilarity(weakGraph(), "Mega", ["Fan"]).pairs[0]!;
+    expect(ranked.score).toBe(0);
+    expect(ranked.path).toBe(null);
+  });
+
+  it("with closest, searches a weak pair again from the liked artist's end", () => {
+    // Hub's search spends its whole budget on its 12,000 fans before it reaches Small
+    const n = (id: string): SimNode => ({ id, name: id, type: "person" });
+    const fans = Array.from({ length: 12000 }, (_, i) => `fan${i}`);
+    const g: GraphAccess = {
+      findNodeByName: (name) => n(name),
+      neighbors(id) {
+        const nb = (to: string, rel: string): SimNeighbor => ({ node: n(to), relType: rel });
+        if (id === "Hub") return [...fans.map((f) => nb(f, "member_of")), nb("Mid", "collaborated_with")];
+        if (id.startsWith("fan")) return [nb("Hub", "member_of")];
+        if (id === "Mid") return [nb("Hub", "collaborated_with"), nb("Small", "collaborated_with")];
+        if (id === "Small") return [nb("Mid", "collaborated_with")];
+        return [];
+      },
+    };
+    expect(computeSimilarity(g, "Hub", ["Small"]).pairs[0]!.path).toBe(null);
+    const both = computeSimilarity(g, "Hub", ["Small"], { closest: true }).pairs[0]!;
+    expect(both.path!.map((s) => s.to.name)).toEqual(["Mid", "Hub"]);
+    expect(both.score).toBe(64);
   });
 });

@@ -238,9 +238,21 @@ export const HOP_DAMPING = 0.9;
 export const HOP_DISTANCE = Math.log(1 / HOP_DAMPING);
 /** Paths longer than this many hops aren't followed. */
 export const MAX_HOPS = 6;
-/** Paths weaker than this (a score under 5) aren't followed: such a pair scores 0, "no path". */
-export const MIN_STRENGTH = 0.05;
-const MAX_LENGTH = Math.log(1 / MIN_STRENGTH);
+/** A pair whose strongest path is weaker than this (a score under 2) scores 0. */
+export const MIN_STRENGTH = 0.02;
+/**
+ * How weak a path the Similarity page still looks for (a score of 0.1), so a pair
+ * that scores 0 can still show its closest connection. Ranking (scoreArtistAgainstList)
+ * stops at MIN_STRENGTH: it only needs the score, and a deeper search costs time per artist.
+ */
+export const PATH_MIN_STRENGTH = 0.001;
+/**
+ * With `closest`, a pair weaker than this is searched again from the liked artist's
+ * end. A search from a hub (will.i.am, Taylor Swift) can spend its MAX_EXPANDED budget
+ * on the hub's huge neighbourhood before it reaches a small artist; from the small
+ * artist's end the same path is found in a few hundred expansions.
+ */
+export const RECHECK_BELOW = 0.05;
 /** At most this many artists are expanded per search, to bound the time a search can take. */
 export const MAX_EXPANDED = 10000;
 
@@ -294,8 +306,8 @@ class MinHeap {
 /**
  * The shortest (strongest) path from `start` to each node in `targetIds`
  * (Dijkstra over REL_DISTANCES + hub damping + HOP_DISTANCE), each read from `start`
- * outwards. A target with no path within MAX_HOPS / MIN_STRENGTH is missing
- * from the result. Stops as soon as every target is settled.
+ * outwards. A target with no path within MAX_HOPS / `minStrength` (default
+ * MIN_STRENGTH) is missing from the result. Stops as soon as every target is settled.
  *
  * Approximate in two corners, both from costs that depend on hop count: a node
  * first reached by a short path at the hop limit isn't expanded further, even if
@@ -306,8 +318,10 @@ class MinHeap {
 export function strongestPaths(
   graph: GraphAccess,
   start: SimNode,
-  targetIds: Set<string>
+  targetIds: Set<string>,
+  minStrength: number = MIN_STRENGTH
 ): Map<string, PathStep[]> {
+  const maxLength = Math.log(1 / minStrength);
   const found = new Map<string, PathStep[]>();
   if (targetIds.has(start.id)) found.set(start.id, []);
   const remaining = new Set([...targetIds].filter((id) => id !== start.id));
@@ -349,7 +363,7 @@ export function strongestPaths(
       const base = repeated ? repeatWeight(relType, count) : relWeight(relType);
       const edge = (repeated ? Math.log(1 / base) : relDistance(relType)) + atFrom.length + atTo.length;
       const nd = d + edge + (hops.get(id)! + 1 > FREE_HOPS ? HOP_DISTANCE : 0);
-      if (nd > MAX_LENGTH || nd >= (dist.get(node.id) ?? Infinity)) continue;
+      if (nd > maxLength || nd >= (dist.get(node.id) ?? Infinity)) continue;
       dist.set(node.id, nd);
       hops.set(node.id, hops.get(id)! + 1);
       nodes.set(node.id, node);
@@ -391,11 +405,24 @@ export function reversePath(path: PathStep[]): PathStep[] {
  * Compute the similarity of the target artist to each listed artist using the
  * full graph: one strongest-path search from the target to all of them.
  */
+/** Pair score, 0..100, from a path's strength: 0 under MIN_STRENGTH. */
+export function strengthScore(strength: number): number {
+  return strength < MIN_STRENGTH ? 0 : Math.round(strength * 100);
+}
+
+/**
+ * `closest` (the Similarity page): look for paths down to PATH_MIN_STRENGTH, so a
+ * pair scoring 0 still shows its closest connection, and search a weak pair again
+ * from the liked artist's end (RECHECK_BELOW), keeping the stronger path. Off for
+ * ranking, which only needs scores and runs once per candidate artist.
+ */
 export function computeSimilarity(
   graph: GraphAccess,
   targetArtist: ArtistRef,
-  listArtists: ArtistRef[]
+  listArtists: ArtistRef[],
+  { closest = false }: { closest?: boolean } = {}
 ): SimilarityResult {
+  const minStrength = closest ? PATH_MIN_STRENGTH : MIN_STRENGTH;
   const target = resolveArtist(graph, targetArtist);
   if (!target) {
     return {
@@ -407,24 +434,21 @@ export function computeSimilarity(
   }
 
   const nodes = listArtists.map((a) => resolveArtist(graph, a));
-  const paths = strongestPaths(graph, target, new Set(nodes.filter((n): n is SimNode => n !== null).map((n) => n.id)));
+  const paths = strongestPaths(graph, target, new Set(nodes.filter((n): n is SimNode => n !== null).map((n) => n.id)), minStrength);
 
   const pairs: PairScore[] = listArtists.map((a, i) => {
     const node = nodes[i];
     if (!node) return { name: refName(a), found: false, distance: null, score: 0, path: null };
     const fromTarget = paths.get(node.id);
-    if (!fromTarget) return { name: node.name, found: true, node, distance: null, path: null, strength: 0, score: 0 };
-    const strength = pathStrength(fromTarget);
-    return {
-      name: node.name,
-      found: true,
-      node,
-      distance: fromTarget.length,
-      // Read from the list artist to the target ("how does the artist I like lead to this one").
-      path: reversePath(fromTarget),
-      strength,
-      score: Math.round(strength * 100),
-    };
+    // Read from the list artist to the target ("how does the artist I like lead to this one").
+    let path = fromTarget ? reversePath(fromTarget) : null;
+    if (closest && node.id !== target.id && (!path || pathStrength(path) < RECHECK_BELOW)) {
+      const fromListArtist = strongestPaths(graph, node, new Set([target.id]), minStrength).get(target.id);
+      if (fromListArtist && (!path || pathStrength(fromListArtist) > pathStrength(path))) path = fromListArtist;
+    }
+    if (!path) return { name: node.name, found: true, node, distance: null, path: null, strength: 0, score: 0 };
+    const strength = pathStrength(path);
+    return { name: node.name, found: true, node, distance: path.length, path, strength, score: strengthScore(strength) };
   });
 
   const overallScore = aggregateScore(pairs);

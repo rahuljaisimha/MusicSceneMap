@@ -45,7 +45,7 @@ A game that gives you two musicians (or two groups) and challenges you to find t
 
 ## Discover
 
-Find upcoming concerts in any city, ranked by how well each headliner fits the artists you like. Enter a city, the dates you're interested in (today through the next 7 days unless you pick others, up to 4 years ahead) and a list of artists: the app finds the city on Pollstar and loads its shows in those dates 100 at a time, soonest first (up to the first 1,000; Pollstar is rate limited). Concerts appear as soon as each page arrives and move into place as their headliners are scored. While it runs, the button turns into a progress bar and **Stop** ends the search with what it has so far. Each concert lists its support acts ("Support from: ..."), and tapping one opens a panel showing how its headliner connects to each artist you like, like the Similarity page's breakdown.
+Find upcoming concerts in any city, ranked by how well each headliner fits the artists you like. Enter a city (a dropdown suggests Pollstar's cities as you type, e.g. "Berlin, Germany" or "Berlin, MD"), the dates you're interested in (today through the next 7 days unless you pick others, up to 4 years ahead) and a list of artists: the app finds the city on Pollstar and loads its shows in those dates 100 at a time, soonest first (up to the first 1,000; Pollstar is rate limited). Concerts appear as soon as each page arrives and move into place as their headliners are scored. While it runs, the button turns into a progress bar and **Stop** ends the search with what it has so far. Each concert lists its support acts ("Support from: ..."), and tapping one opens a panel showing how its headliner connects to each artist you like, like the Similarity page's breakdown.
 
 ## Similarity
 

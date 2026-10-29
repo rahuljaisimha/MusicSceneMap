@@ -152,7 +152,10 @@ Discover (upcoming concert recommendations, streamed: concertSearch.ts streamCon
     User enters city + dates (From / To date inputs, a calendar in the browser; default
     today → +7 days, dateRange.ts: clampRange keeps from ≥ today, to ≥ from, ≤ 4 years
     out) + artists, presses Find Concerts
-        → Pollstar autocomplete for the city name (one request): pickCity takes an exact
+        → The city input suggests Pollstar cities as you type (CityAutocomplete:
+          searchCities through pollstar-city, 350 ms debounce, 2+ characters); a
+          picked city is used as it is. Typed text: Pollstar autocomplete for the
+          city name (one request): pickCity takes an exact
           "City, State" match, else the most prominent city of that name ("Berlin" →
           Berlin, Germany over Berlin, MD)
         → The city's events between those dates, CITY_PAGE_SIZE (100) a page, soonest

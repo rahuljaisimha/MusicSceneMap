@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { searchCities, getCityEvents } from "../api/pollstar";
+import { searchCities, getCityEvents, type PollstarCity } from "../api/pollstar";
+import { CityAutocomplete } from "../components/CityAutocomplete";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { MIN_STRENGTH, scoreArtistsAgainstList } from "./similarity";
 import { panelStyles, PathSteps, scoreColor, scoreFormula } from "../components/ConnectionPath";
@@ -16,6 +17,8 @@ function yieldToBrowser(): Promise<void> {
 
 export function DiscoverPage() {
   const [city, setCity] = useState("");
+  // The city picked from the dropdown, while its name is still in the input
+  const [cityPick, setCityPick] = useState<PollstarCity | null>(null);
   const [searchedCity, setSearchedCity] = useState("");
   // Today through a week from today, until the user picks other dates
   const [range, setRange] = useState<DateRange>(() => defaultRange());
@@ -88,7 +91,9 @@ export function DiscoverPage() {
       await streamConcerts(
         cityName,
         {
-          findCity: async (query) => pickCity(await searchCities(query), query),
+          // A picked city as it is; typed text, the best match for it
+          findCity: async (query) =>
+            cityPick && cityPick.name === query ? cityPick : pickCity(await searchCities(query), query),
           cityEvents: (cityId, page) => getCityEvents(cityId, page, dates),
           // A page's headliners together: those missing from the browser graph are
           // fetched at once, then one search from each liked artist scores them all.
@@ -163,15 +168,20 @@ export function DiscoverPage() {
         <div style={styles.form}>
           <div style={styles.field}>
             <label style={styles.label}>City</label>
-            <input
-              type="text"
+            <CityAutocomplete
               value={city}
-              onChange={(e) => setCity(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleFindConcerts();
+              onChange={(v) => {
+                setCity(v);
+                if (cityPick && v !== cityPick.name) setCityPick(null);
               }}
+              onSelect={(c) => {
+                setCity(c.name);
+                setCityPick(c);
+              }}
+              onEnter={handleFindConcerts}
               placeholder="e.g. Los Angeles, London, Melbourne"
-              style={styles.input}
+              inputStyle={styles.input}
+              ariaLabel="City"
             />
           </div>
 

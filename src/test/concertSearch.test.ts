@@ -16,7 +16,6 @@ function ev(id: string, artist: string, date: string, venueName = "SO36"): Polls
     venueId: venueName,
     venueName,
     artists: [{ name: artist, isHeadline: true, genres: [], artistType: "Band" }],
-    tickets: [],
   };
 }
 

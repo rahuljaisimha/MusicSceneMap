@@ -30,8 +30,6 @@ export interface RankedConcert {
   artistFound: boolean;
   /** Similarity of the headline artist to the taste list, 0..100. */
   score: number;
-  /** Ticket links, if any. */
-  tickets: PollstarEvent["tickets"];
 }
 
 /** Pick the headline artist for an event, falling back to the first listed. */
@@ -59,7 +57,6 @@ export function toConcert(
     scored: scored !== undefined,
     artistFound: scored?.found ?? false,
     score: scored?.score ?? 0,
-    tickets: event.tickets,
   };
 }
 

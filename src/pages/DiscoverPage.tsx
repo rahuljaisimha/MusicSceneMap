@@ -263,16 +263,6 @@ export function DiscoverPage() {
                     ))}
                   </div>
                 )}
-                {c.tickets.length > 0 && (
-                  <div style={styles.ticketRow}>
-                    {c.tickets.map((t, ti) => (
-                      <a key={ti} href={t.url} target="_blank" rel="noreferrer" style={styles.ticketLink}>
-                        {t.name}
-                        {t.time ? ` · ${t.time}` : ""}
-                      </a>
-                    ))}
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -367,6 +357,4 @@ const styles: Record<string, React.CSSProperties> = {
   concertMeta: { fontSize: "0.8rem", color: "#aaa", marginBottom: "0.4rem" },
   tags: { display: "flex", flexWrap: "wrap", gap: "0.3rem" },
   artistTag: { padding: "0.15rem 0.5rem", borderRadius: "10px", fontSize: "0.7rem", background: "rgba(254, 202, 87, 0.15)", color: "#feca57", border: "1px solid rgba(254, 202, 87, 0.3)" },
-  ticketRow: { display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.5rem" },
-  ticketLink: { fontSize: "0.75rem", color: "#48dbfb", textDecoration: "none", border: "1px solid rgba(72, 219, 251, 0.3)", borderRadius: "10px", padding: "0.15rem 0.6rem" },
 };

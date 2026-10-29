@@ -1,9 +1,26 @@
-import { useEffect, useState } from "react";
-import { computeSimilarity, FREE_HOPS, HOP_DAMPING, MIN_STRENGTH, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
+import { useEffect, useRef, useState } from "react";
+import { computeSimilarity, FREE_HOPS, HOP_DAMPING, mergePairs, MIN_STRENGTH, pendingPairs, REL_WEIGHTS, type PairScore, type PathStep, type SimilarityResult } from "./similarity";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
 import { relationSentence } from "../graph/relationships";
 import { addPicked, chipLabel, fromSuggestion, inputArtist, pickedKey, type PickedArtist } from "./pickedArtists";
+
+/**
+ * Resolves after the browser has painted what was just rendered. A hidden tab
+ * doesn't run animation frames, so it also goes ahead after 100 ms.
+ */
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      setTimeout(resolve, 0);
+    };
+    requestAnimationFrame(go);
+    setTimeout(go, 100);
+  });
+}
 
 function scoreColor(score: number): string {
   if (score >= 70) return "#55efc4";
@@ -29,6 +46,11 @@ export function SimilarityPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openPair, setOpenPair] = useState<PairScore | null>(null);
+  // Liked artists (node ids) still being searched for their closest connection
+  const [searching, setSearching] = useState<Set<string>>(new Set());
+  // Each Compute starts a new run; a slower earlier run's second pass is dropped
+  const runRef = useRef(0);
+  const isSearching = (p: PairScore) => p.node !== undefined && searching.has(p.node.id);
 
   // Escape closes the connection panel.
   useEffect(() => {
@@ -54,22 +76,46 @@ export function SimilarityPage() {
 
   const handleCompare = async () => {
     if (!target.trim() || artists.length === 0) return;
+    const run = ++runRef.current;
     setLoading(true);
     setError(null);
     setResult(null);
     setOpenPair(null);
+    setSearching(new Set());
 
     try {
       const tiered = await buildTieredGraphAccess();
       // Resolve any artists missing from the core graph via Tier 2/3 first.
       const targetArtist = inputArtist(target, targetPick);
       await tiered.prepareArtists([targetArtist, ...artists]);
-      const res = computeSimilarity(tiered.build(), targetArtist, artists, { closest: true });
-      setResult(res);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
+      const graph = tiered.build();
+      // First pass: every pair scoring 5 or more, at once; the rest show 0 for now.
+      const quick = computeSimilarity(graph, targetArtist, artists, { quick: true });
+      if (run !== runRef.current) return;
+      setResult(quick);
       setLoading(false);
+      const pending = pendingPairs(quick);
+      if (!quick.target || pending.length === 0) return;
+
+      // Second pass, once the first is on screen: their closest connections (and any score of 2-4).
+      setSearching(new Set(pending.map((p) => p.node!.id)));
+      await nextPaint();
+      if (run !== runRef.current) return;
+      const deeper = computeSimilarity(
+        graph,
+        { name: quick.target.name, id: quick.target.id },
+        pending.map((p) => ({ name: p.node!.name, id: p.node!.id })),
+        { closest: true }
+      );
+      if (run !== runRef.current) return;
+      setResult((prev) => (prev ? mergePairs(prev, deeper.pairs) : prev));
+      // Keep an open panel on the same artist, now with its path
+      setOpenPair((prev) => (prev?.node && deeper.pairs.find((p) => p.node?.id === prev.node!.id)) || prev);
+      setSearching(new Set());
+    } catch (e) {
+      if (run === runRef.current) setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      if (run === runRef.current) setLoading(false);
     }
   };
 
@@ -192,7 +238,9 @@ export function SimilarityPage() {
                     <div style={styles.pairDetail}>
                       <div style={styles.pairDistance}>
                         {p.distance === null
-                          ? "No path found"
+                          ? isSearching(p)
+                            ? "Looking for a connection…"
+                            : "No path found"
                           : p.distance === 0
                             ? "Same artist"
                             : `${p.distance} hop${p.distance === 1 ? "" : "s"} away`}
@@ -226,7 +274,7 @@ export function SimilarityPage() {
 
       </div>
       {result && openPair && (
-        <ConnectionPanel pair={openPair} result={result} onClose={() => setOpenPair(null)} />
+        <ConnectionPanel pair={openPair} result={result} searching={isSearching(openPair)} onClose={() => setOpenPair(null)} />
       )}
     </div>
   );
@@ -275,7 +323,17 @@ function superscript(n: number): string {
  * How one liked artist relates to the compared artist. Uses Explore's node
  * panel (.info-panel): a sidebar on desktop, a bottom sheet on phones.
  */
-function ConnectionPanel({ pair, result, onClose }: { pair: PairScore; result: SimilarityResult; onClose: () => void }) {
+function ConnectionPanel({
+  pair,
+  result,
+  searching,
+  onClose,
+}: {
+  pair: PairScore;
+  result: SimilarityResult;
+  searching: boolean;
+  onClose: () => void;
+}) {
   const path = pair.path;
   return (
     <aside id="connection-panel" className="info-panel" style={styles.panel} aria-label="How they connect">
@@ -288,7 +346,7 @@ function ConnectionPanel({ pair, result, onClose }: { pair: PairScore; result: S
       <h2 style={styles.panelTitle}>{pair.name} → {result.targetName}</h2>
       <section style={styles.sheetSection}>
         {path == null ? (
-          <p style={styles.sheetMuted}>No connection within 6 hops.</p>
+          <p style={styles.sheetMuted}>{searching ? "Looking for the closest connection…" : "No connection within 6 hops."}</p>
         ) : path.length === 0 ? (
           <p style={styles.sheetMuted}>Same artist.</p>
         ) : (

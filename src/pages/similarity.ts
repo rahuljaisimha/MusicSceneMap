@@ -247,6 +247,12 @@ export const MIN_STRENGTH = 0.02;
  */
 export const PATH_MIN_STRENGTH = 0.001;
 /**
+ * The Similarity page's first, quick pass stops here (a score of 5): its pairs show
+ * at once, a pair under it shows 0 while a second pass (`closest`) looks for its
+ * closest connection (pendingPairs / mergePairs).
+ */
+export const QUICK_MIN_STRENGTH = 0.05;
+/**
  * With `closest`, a pair weaker than this is searched again from the liked artist's
  * end. A search from a hub (will.i.am, Taylor Swift) can spend its MAX_EXPANDED budget
  * on the hub's huge neighbourhood before it reaches a small artist; from the small
@@ -420,9 +426,9 @@ export function computeSimilarity(
   graph: GraphAccess,
   targetArtist: ArtistRef,
   listArtists: ArtistRef[],
-  { closest = false }: { closest?: boolean } = {}
+  { closest = false, quick = false }: { closest?: boolean; quick?: boolean } = {}
 ): SimilarityResult {
-  const minStrength = closest ? PATH_MIN_STRENGTH : MIN_STRENGTH;
+  const minStrength = closest ? PATH_MIN_STRENGTH : quick ? QUICK_MIN_STRENGTH : MIN_STRENGTH;
   const target = resolveArtist(graph, targetArtist);
   if (!target) {
     return {
@@ -454,6 +460,18 @@ export function computeSimilarity(
   const overallScore = aggregateScore(pairs);
   const sortedPairs = [...pairs].sort((a, b) => b.score - a.score);
   return { targetName: target.name, target, targetFound: true, overallScore, pairs: sortedPairs };
+}
+
+/** The pairs a quick pass (`quick`) left without a path: they show 0 until a `closest` pass fills them in. */
+export function pendingPairs(result: SimilarityResult): PairScore[] {
+  return result.pairs.filter((p) => p.found && p.node && p.path == null);
+}
+
+/** `result` with `updates` (a later pass over some of its liked artists) swapped in by artist, re-scored and re-sorted. */
+export function mergePairs(result: SimilarityResult, updates: PairScore[]): SimilarityResult {
+  const byId = new Map(updates.filter((p) => p.node).map((p) => [p.node!.id, p]));
+  const pairs = result.pairs.map((p) => (p.node && byId.get(p.node.id)) || p);
+  return { ...result, overallScore: aggregateScore(pairs), pairs: [...pairs].sort((a, b) => b.score - a.score) };
 }
 
 /**

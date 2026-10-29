@@ -19,6 +19,8 @@ import {
   MAX_HOPS,
   MIN_STRENGTH,
   strengthScore,
+  pendingPairs,
+  mergePairs,
   type GraphAccess,
   type SimNode,
   type SimNeighbor,
@@ -599,3 +601,45 @@ describe("weak paths", () => {
     expect(both.score).toBe(64);
   });
 });
+
+describe("two passes (the Similarity page)", () => {
+  /** Fan played on Mid's records; Mid on Star's (200 collaborators) and Indie's. */
+  function g(): GraphAccess {
+    const n = (id: string): SimNode => ({ id, name: id, type: "person" });
+    const edges: Array<[string, string]> = [["Fan", "Mid"], ["Mid", "Star"], ["Mid", "Indie"]];
+    const degrees: Record<string, number> = { Star: 200 };
+    return {
+      findNodeByName: (name) => n(name),
+      findNodeById: (id) => n(id),
+      neighbors(id) {
+        const out: SimNeighbor[] = [];
+        for (const [s, t] of edges) {
+          if (s === id) out.push({ node: n(t), relType: "collaborated_with", outgoing: true });
+          if (t === id) out.push({ node: n(s), relType: "collaborated_with", outgoing: false });
+        }
+        return out;
+      },
+      degree: (id) => degrees[id] ?? 2,
+    };
+  }
+
+  it("shows pairs under 5 as 0 first, then fills in their path and score", () => {
+    const quick = computeSimilarity(g(), "Star", ["Mid", "Fan", "Nobody"], { quick: true });
+    const fan = quick.pairs.find((p) => p.name === "Fan")!;
+    expect(fan.score).toBe(0);
+    expect(fan.path).toBe(null);
+    expect(pendingPairs(quick).map((p) => p.name)).toEqual(["Fan", "Nobody"]);
+
+    const pending = pendingPairs(quick);
+    const deeper = computeSimilarity(g(), { name: "Star", id: "Star" }, pending.map((p) => ({ name: p.name, id: p.node!.id })), {
+      closest: true,
+    });
+    const merged = mergePairs(quick, deeper.pairs);
+    // Mid: 0.8 x 14/200 = 0.056 (first pass); Fan: 0.8 x 0.056 = 0.045 (second)
+    expect(merged.pairs.map((p) => [p.name, p.score])).toEqual([["Mid", 6], ["Fan", 4], ["Nobody", 0]]);
+    expect(merged.pairs.find((p) => p.name === "Fan")!.path!.map((s) => s.to.name)).toEqual(["Mid", "Star"]);
+    expect(merged.overallScore).toBe(6);
+    expect(merged).toEqual(computeSimilarity(g(), "Star", ["Mid", "Fan", "Nobody"], { closest: true }));
+  });
+});
+

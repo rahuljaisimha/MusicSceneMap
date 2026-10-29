@@ -43,7 +43,6 @@ function ev(id: string, artist: string, date: string, opts: Partial<PollstarEven
     venueId: "v1",
     venueName: "Zebulon",
     artists: [{ name: artist, isHeadline: true, genres: [], artistType: "Band" }],
-    tickets: [],
     ...opts,
   };
 }
@@ -144,7 +143,7 @@ describe("Pollstar parsing", () => {
     expect(venues[0]).toMatchObject({ id: "109231560", name: "Zebulon", city: "Los Angeles", rank: 250 });
   });
 
-  it("parseEvents flattens events, artists, and tickets", () => {
+  it("parseEvents flattens events and artists, leaving out ticket links", () => {
     const raw = {
       totalEvents: 1,
       events: [
@@ -168,12 +167,7 @@ describe("Pollstar parsing", () => {
       venueName: "Zebulon",
     });
     expect(events[0]!.artists[0]!.name).toBe("The Sleeves");
-    expect(events[0]!.tickets[0]!.url).toBe("https://link.dice.fm/x");
-  });
-
-  it("parseEvents drops tickets without a url", () => {
-    const raw = { events: [{ id: 1, name: "e", playDate: "2026-10-01", venue: { id: 1, name: "V" }, artists: [], tickets: [{ name: "NoUrl" }] }] };
-    expect(parseEvents(raw)[0]!.tickets).toHaveLength(0);
+    expect(events[0]).not.toHaveProperty("tickets");
   });
 
   it("formatPollstarDate produces MM-DD-YYYY", () => {

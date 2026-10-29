@@ -19,7 +19,7 @@
  *                   &sortAscending=true&sortColumn=playdate&newOnly=false
  *     → { totalPages, totalEvents, events: [{ id, name, playDate, url,
  *          isFestival, venue{...}, artists:[{ name, isHeadline, genres,
- *          artistType }], tickets:[{ name, url, time }] }] }
+ *          artistType }], tickets, ... }] }  (tickets aren't read: see parseEvents)
  *     NOTE: fromDate MUST be today-or-later; past dates are subscription-gated.
  */
 
@@ -67,12 +67,6 @@ export interface PollstarEventArtist {
   artistType: string | null;
 }
 
-export interface PollstarTicket {
-  name: string;
-  url: string;
-  time: string | null;
-}
-
 export interface PollstarEvent {
   id: string;
   name: string;
@@ -83,7 +77,6 @@ export interface PollstarEvent {
   venueId: string;
   venueName: string;
   artists: PollstarEventArtist[];
-  tickets: PollstarTicket[];
 }
 
 // --- Raw response shapes (partial) ---
@@ -113,7 +106,6 @@ interface RawEvent {
   isFestival?: boolean;
   venue?: { id?: number | string; name?: string };
   artists?: Array<{ name: string; isHeadline?: boolean; genres?: string[]; artistType?: string | null }>;
-  tickets?: Array<{ name?: string; url?: string; time?: string | null }>;
 }
 
 // --- Parsing (pure, exported for tests) -------------------------------------
@@ -151,7 +143,7 @@ export function parseCities(raw: RawAutocomplete): PollstarCity[] {
     }));
 }
 
-/** Parse the events response into a flat list of events. */
+/** Parse the events response into a flat list of events. Ticket links are left out on purpose. */
 export function parseEvents(raw: RawEventsResponse): PollstarEvent[] {
   const events = raw.events ?? [];
   return events.map((e) => ({
@@ -168,9 +160,6 @@ export function parseEvents(raw: RawEventsResponse): PollstarEvent[] {
       genres: a.genres ?? [],
       artistType: a.artistType ?? null,
     })),
-    tickets: (e.tickets ?? [])
-      .filter((t): t is { name: string; url: string; time?: string | null } => Boolean(t.url))
-      .map((t) => ({ name: t.name ?? "Tickets", url: t.url, time: t.time ?? null })),
   }));
 }
 

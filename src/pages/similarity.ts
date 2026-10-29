@@ -627,6 +627,14 @@ export function mergePairs(result: SimilarityResult, updates: PairScore[]): Simi
   return { ...result, overallScore: aggregateScore(pairs), pairs: [...pairs].sort((a, b) => b.score - a.score) };
 }
 
+/** A candidate's score against the liked list, with how it connects to each liked artist (when in the graph). */
+export interface HeadlinerScore {
+  score: number;
+  found: boolean;
+  /** One per liked artist, its path read from the liked artist to the candidate. */
+  pairs?: PairScore[];
+}
+
 /** Artists settled per search between pauses in scoreArtistsAgainstList. */
 export const SCORE_STEP = 400;
 
@@ -648,16 +656,16 @@ export async function scoreArtistsAgainstList(
   candidates: ArtistRef[],
   listArtists: ArtistRef[],
   pause: () => Promise<void> = () => Promise.resolve(),
-  onScore: (name: string, score: { score: number; found: boolean }) => void = () => {}
-): Promise<Map<string, { score: number; found: boolean }>> {
+  onScore: (name: string, score: HeadlinerScore) => void = () => {}
+): Promise<Map<string, HeadlinerScore>> {
   const nodes = candidates.map((c) => resolveArtist(graph, c));
   const ids = new Set(nodes.flatMap((n) => (n ? [n.id] : [])));
   const searches = listArtists.map((liked) => {
     const start = resolveArtist(graph, liked);
     return start && ids.size > 0 ? new PathSearch(graph, start, ids) : null;
   });
-  const scores = new Map<string, { score: number; found: boolean }>();
-  const settle = (name: string, score: { score: number; found: boolean }) => {
+  const scores = new Map<string, HeadlinerScore>();
+  const settle = (name: string, score: HeadlinerScore) => {
     scores.set(name, score);
     onScore(name, score);
   };
@@ -670,7 +678,7 @@ export async function scoreArtistsAgainstList(
 
   for (;;) {
     // Everyone this round settled, best first
-    const ready: Array<{ i: number; score: number }> = [];
+    const ready: Array<{ i: number; score: number; pairs: PairScore[] }> = [];
     for (const i of [...pending]) {
       const node = nodes[i]!;
       if (!listArtists.every((_, j) => known(j, node.id))) continue;
@@ -682,9 +690,9 @@ export async function scoreArtistsAgainstList(
         const strength = path ? pathStrength(path) : 0;
         return { name: refName(liked), found: true, distance: path?.length ?? null, path, strength, score: strengthScore(strength) };
       });
-      ready.push({ i, score: aggregateScore(pairs) });
+      ready.push({ i, score: aggregateScore(pairs), pairs });
     }
-    for (const { i, score } of ready.sort((a, b) => b.score - a.score)) settle(refName(candidates[i]!), { score, found: true });
+    for (const { i, score, pairs } of ready.sort((a, b) => b.score - a.score)) settle(refName(candidates[i]!), { score, found: true, pairs });
     if (pending.size === 0) break;
     for (const search of searches) if (search && !search.done) search.step(SCORE_STEP);
     await pause();

@@ -9,7 +9,7 @@
  * headliner is scored (`scored: false`) and moves into place once it is.
  */
 
-import type { ArtistRef, GraphAccess } from "./similarity";
+import type { ArtistRef, GraphAccess, HeadlinerScore, PairScore } from "./similarity";
 import { scoreArtistAgainstList } from "./similarity";
 import type { PollstarEvent } from "../api/pollstar";
 
@@ -30,6 +30,8 @@ export interface RankedConcert {
   artistFound: boolean;
   /** Similarity of the headline artist to the taste list, 0..100. */
   score: number;
+  /** How the headliner connects to each liked artist (read from the liked artist), once scored. */
+  pairs?: PairScore[];
 }
 
 /** Pick the headline artist for an event, falling back to the first listed. */
@@ -43,7 +45,7 @@ export function headlineArtist(event: PollstarEvent): string | null {
 export function toConcert(
   event: PollstarEvent,
   headline: string,
-  scored?: { score: number; found: boolean }
+  scored?: HeadlinerScore
 ): RankedConcert {
   return {
     id: event.id,
@@ -57,6 +59,7 @@ export function toConcert(
     scored: scored !== undefined,
     artistFound: scored?.found ?? false,
     score: scored?.score ?? 0,
+    ...(scored?.pairs ? { pairs: scored.pairs } : {}),
   };
 }
 

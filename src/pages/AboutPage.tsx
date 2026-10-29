@@ -40,8 +40,9 @@ export function AboutPage() {
         </p>
         <p style={styles.paragraph}>
           Concerts appear as they're found and move into place as their headliners are scored with the
-          same graph-based similarity as the Similarity page. A spinner shows it's still searching,
-          and Stop ends the search with what it has found so far. Artists not yet in the graph are
+          same graph-based similarity as the Similarity page. While it searches, the button shows its
+          progress, and Stop ends the search with what it has found so far. Tap a concert to see how
+          its headliner connects to the artists you like. Artists not yet in the graph are
           shown but ranked lowest.
         </p>
 

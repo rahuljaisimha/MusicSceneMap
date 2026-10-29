@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { searchCities, getCityEvents } from "../api/pollstar";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
-import { scoreArtistsAgainstList } from "./similarity";
-import { CITY_PAGE_SIZE, MAX_CITY_PAGES, pickCity, streamConcerts, type ConcertSearchProgress } from "./concertSearch";
+import { MIN_STRENGTH, scoreArtistsAgainstList } from "./similarity";
+import { panelStyles, PathSteps, scoreColor, scoreFormula } from "../components/ConnectionPath";
+import { CITY_PAGE_SIZE, MAX_CITY_PAGES, pickCity, searchProgress, streamConcerts, type ConcertSearchProgress } from "./concertSearch";
 import { clampRange, defaultRange, formatRange, isoDate, maxDate, type DateRange } from "./dateRange";
 import type { RankedConcert } from "./concerts";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
@@ -24,6 +25,19 @@ export function DiscoverPage() {
   const [concerts, setConcerts] = useState<RankedConcert[] | null>(null);
   const [progress, setProgress] = useState<ConcertSearchProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The concert whose panel is open (by id, so it follows the concert as it's scored and re-sorted)
+  const [openId, setOpenId] = useState<string | null>(null);
+  const openConcert = openId ? (concerts?.find((c) => c.id === openId) ?? null) : null;
+
+  // Escape closes the panel.
+  useEffect(() => {
+    if (!openId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenId(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openId]);
   // Each search is a run; Stop (or a new search, or leaving the page) ends the current one.
   const runRef = useRef(0);
   // Headliner scores by liked-artist list, kept across searches on this page
@@ -34,6 +48,7 @@ export function DiscoverPage() {
   const today = isoDate(new Date());
   const lastDay = maxDate(today);
   const rangeLabel = searchedRange ? formatRange(searchedRange) : "";
+  const done = progress && concerts ? Math.round(searchProgress(progress, concerts) * 100) : 0;
 
   const addArtist = (artist: PickedArtist) => {
     if (!artist.name.trim()) return;
@@ -63,6 +78,7 @@ export function DiscoverPage() {
     setSearchedRange(dates);
     setError(null);
     setConcerts([]);
+    setOpenId(null);
     setProgress({ stage: "city", city: null, pagesLoaded: 0, pagesTotal: 0, concertsTotal: 0, scoring: 0 });
 
     const liked = artists.map(pickedKey).sort().join(",");
@@ -212,8 +228,16 @@ export function DiscoverPage() {
           </div>
 
           {running ? (
-            <button type="button" onClick={handleStop} className="discover-stop" style={styles.stopBtn}>
-              Stop
+            // The button is the progress bar while the search runs
+            <button
+              type="button"
+              onClick={handleStop}
+              className="discover-stop"
+              style={styles.stopBtn}
+              aria-label={`Stop (${done}% done)`}
+            >
+              <span className="progress-fill" style={{ ...styles.progressFill, width: `${done}%` }} aria-hidden="true" />
+              <span style={styles.progressLabel}>Stop · {done}%</span>
             </button>
           ) : (
             <button
@@ -240,43 +264,106 @@ export function DiscoverPage() {
               <span style={styles.resultsDates}>{rangeLabel}</span>
             </h2>
             {concerts.map((c) => (
-              <div key={c.id} style={styles.card}>
-                <div style={styles.cardHeader}>
+              <button
+                key={c.id}
+                type="button"
+                className="pair-card"
+                style={{ ...styles.card, ...styles.cardButton, ...(openId === c.id ? styles.cardSelected : {}) }}
+                onClick={() => setOpenId(c.id)}
+                aria-expanded={openId === c.id}
+                aria-controls="concert-panel"
+              >
+                <span style={styles.cardHeader}>
                   <span style={styles.cardName}>{c.artistName}</span>
-                  {!c.scored && running ? (
-                    <span style={styles.scoring}>
-                      <span className="spinner spinner-small" aria-hidden="true" />
-                      scoring
-                    </span>
-                  ) : !c.scored ? (
-                    <span style={styles.notFound}>not scored</span>
-                  ) : c.artistFound ? (
-                    <span style={{ ...styles.match, color: scoreColor(c.score) }}>{c.score}% match</span>
-                  ) : (
-                    <span style={styles.notFound}>not in graph</span>
-                  )}
-                </div>
-                <div style={styles.concertMeta}>
+                  <ScoreLabel concert={c} running={running} />
+                </span>
+                {c.supportingArtists.length > 0 && (
+                  <span style={styles.support}>Support from: {c.supportingArtists.join(", ")}</span>
+                )}
+                <span style={styles.concertMeta}>
                   {formatDate(c.playDate)} · {c.venueName}
                   {c.isFestival ? " · Festival" : ""}
-                </div>
-                {c.supportingArtists.length > 0 && (
-                  <div style={styles.tags}>
-                    {c.supportingArtists.slice(0, 6).map((a) => (
-                      <span key={a} style={styles.artistTag}>{a}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
+                </span>
+              </button>
             ))}
           </div>
         )}
       </div>
+      {openConcert && <ConcertPanel concert={openConcert} running={running} onClose={() => setOpenId(null)} />}
     </div>
   );
 }
 
-/** Where the search is: a spinner while it runs, then a summary. */
+/** A concert's score, or where its scoring is. */
+function ScoreLabel({ concert: c, running }: { concert: RankedConcert; running: boolean }) {
+  if (!c.scored) return <span style={styles.notFound}>{running ? "scoring…" : "not scored"}</span>;
+  if (!c.artistFound) return <span style={styles.notFound}>not in graph</span>;
+  return <span style={{ ...styles.match, color: scoreColor(c.score) }}>{c.score}% match</span>;
+}
+
+/**
+ * How a concert's headliner connects to each liked artist: the strongest path
+ * from each, best first. Explore's node panel (.info-panel): a sidebar on
+ * desktop, a bottom sheet on phones, like the Similarity page's.
+ */
+function ConcertPanel({ concert: c, running, onClose }: { concert: RankedConcert; running: boolean; onClose: () => void }) {
+  const pairs = [...(c.pairs ?? [])].sort((a, b) => b.score - a.score);
+  return (
+    <aside id="concert-panel" className="info-panel" style={panelStyles.panel} aria-label="How this concert fits">
+      <div style={panelStyles.header}>
+        {c.scored && c.artistFound ? (
+          <span style={{ ...panelStyles.badge, background: scoreColor(c.score) }}>{c.score}/100</span>
+        ) : (
+          <span style={panelStyles.muted}>{!c.scored ? (running ? "scoring…" : "not scored") : "not in graph"}</span>
+        )}
+        <button onClick={onClose} className="info-close" style={panelStyles.close} aria-label="Close panel">
+          ×
+        </button>
+      </div>
+      <h2 style={panelStyles.title}>{c.artistName}</h2>
+      <section style={panelStyles.section}>
+        {c.supportingArtists.length > 0 && <p style={panelStyles.muted}>Support from: {c.supportingArtists.join(", ")}</p>}
+        <p style={panelStyles.muted}>
+          {formatDate(c.playDate)} · {c.venueName}
+          {c.isFestival ? " · Festival" : ""}
+        </p>
+      </section>
+      {!c.scored ? null : !c.artistFound ? (
+        <p style={panelStyles.muted}>{c.artistName} isn't in the music graph, so it can't be compared yet.</p>
+      ) : (
+        <>
+          {pairs.map((pair) => (
+            <section key={pair.name} style={panelStyles.section}>
+              <h3 style={panelStyles.heading}>
+                {pair.name} → {c.artistName}: {pair.score}
+              </h3>
+              {pair.path == null ? (
+                <p style={panelStyles.muted}>No connection close enough to count.</p>
+              ) : pair.path.length === 0 ? (
+                <p style={panelStyles.muted}>Same artist.</p>
+              ) : (
+                <>
+                  <PathSteps path={pair.path} />
+                  <p style={panelStyles.muted}>{scoreFormula(pair, MIN_STRENGTH)}</p>
+                </>
+              )}
+            </section>
+          ))}
+          {pairs.length > 1 && (
+            <section style={panelStyles.section}>
+              <h3 style={panelStyles.heading}>Score</h3>
+              <p style={panelStyles.muted}>
+                The best connection ({pairs[0]!.score}), plus a share of each other one scoring 60 or more: {c.score}.
+              </p>
+            </section>
+          )}
+        </>
+      )}
+    </aside>
+  );
+}
+
+/** Where the search is, then a summary of what it found. */
 function StatusLine({
   progress,
   found,
@@ -289,7 +376,6 @@ function StatusLine({
   dates: string;
 }) {
   const { stage, city, pagesLoaded, pagesTotal, concertsTotal, scoring } = progress;
-  const running = stage === "city" || stage === "concerts";
   const of = Math.min(concertsTotal, pagesTotal * CITY_PAGE_SIZE);
   let text: string;
   if (stage === "city") text = `Looking up ${query}…`;
@@ -305,8 +391,7 @@ function StatusLine({
   else text = `All ${found} concerts in ${city}, ${dates}.`;
   return (
     <div style={styles.status} role="status">
-      {running && <span className="spinner" aria-hidden="true" />}
-      <span>{text}</span>
+      {text}
     </div>
   );
 }
@@ -318,15 +403,8 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 }
 
-function scoreColor(score: number): string {
-  if (score >= 70) return "#55efc4";
-  if (score >= 40) return "#feca57";
-  if (score >= 15) return "#ff9f43";
-  return "#636e72";
-}
-
 const styles: Record<string, React.CSSProperties> = {
-  page: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
+  page: { flex: 1, display: "flex", overflow: "hidden", position: "relative" },
   container: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "1.5rem", overflowY: "auto", gap: "1.25rem" },
   header: { textAlign: "center" },
   title: { fontSize: "1.6rem", fontWeight: 700, color: "#e0e0e0", marginBottom: "0.25rem" },
@@ -347,18 +425,20 @@ const styles: Record<string, React.CSSProperties> = {
   chip: { display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.2rem 0.6rem", borderRadius: "12px", background: "#2a2a2a", color: "#e0e0e0", fontSize: "0.8rem", border: "1px solid #444" },
   chipRemove: { background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: "1rem", lineHeight: 1, padding: 0 },
   searchBtn: { padding: "0.6rem 1.25rem", minHeight: "44px", borderRadius: "4px", border: "none", background: "#ff6b6b", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" },
-  stopBtn: { padding: "0.6rem 1.25rem", minHeight: "44px", borderRadius: "4px", border: "1px solid #ff6b6b", background: "transparent", color: "#ff6b6b", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" },
+  stopBtn: { position: "relative", overflow: "hidden", padding: "0.6rem 1.25rem", minHeight: "44px", borderRadius: "4px", border: "1px solid #ff6b6b", background: "transparent", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" },
+  progressFill: { position: "absolute", inset: "0 auto 0 0", background: "rgba(255, 107, 107, 0.55)", transition: "width 0.3s ease-out" },
+  progressLabel: { position: "relative" },
   error: { color: "#ff6b6b", fontSize: "0.85rem" },
   status: { display: "flex", alignItems: "center", gap: "0.6rem", color: "#aaa", fontSize: "0.85rem", width: "100%", maxWidth: "450px" },
   results: { width: "100%", maxWidth: "450px" },
   resultsTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e0", marginBottom: "0.75rem" },
   card: { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", padding: "0.75rem", marginBottom: "0.5rem" },
-  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" },
+  cardButton: { display: "flex", flexDirection: "column", gap: "0.3rem", width: "100%", textAlign: "left", font: "inherit", color: "inherit", cursor: "pointer", minHeight: "44px" },
+  cardSelected: { border: "1px solid #48dbfb" },
+  support: { fontSize: "0.8rem", color: "#ccc" },
+  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" },
   cardName: { fontWeight: 600, color: "#e0e0e0", fontSize: "0.95rem", minWidth: 0, overflowWrap: "anywhere" },
   match: { fontSize: "0.8rem", fontWeight: 600, whiteSpace: "nowrap" },
-  scoring: { display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.72rem", color: "#888", whiteSpace: "nowrap" },
   notFound: { fontSize: "0.72rem", color: "#636e72", fontStyle: "italic", whiteSpace: "nowrap" },
-  concertMeta: { fontSize: "0.8rem", color: "#aaa", marginBottom: "0.4rem" },
-  tags: { display: "flex", flexWrap: "wrap", gap: "0.3rem" },
-  artistTag: { padding: "0.15rem 0.5rem", borderRadius: "10px", fontSize: "0.7rem", background: "rgba(254, 202, 87, 0.15)", color: "#feca57", border: "1px solid rgba(254, 202, 87, 0.3)" },
+  concertMeta: { fontSize: "0.8rem", color: "#888" },
 };

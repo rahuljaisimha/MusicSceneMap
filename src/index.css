@@ -56,26 +56,9 @@ input {
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
 }
-/* Similarity: breakdown cards open the connection panel (Explore's .info-panel) */
+/* Similarity breakdown and Discover concert cards open a connection panel (Explore's .info-panel) */
 .pair-card:not([aria-expanded="true"]):hover { border-color: #444 !important; }
 .pair-card:focus-visible { outline: 2px solid #48dbfb; outline-offset: 2px; }
-
-/* Discover: still searching */
-.spinner {
-  display: inline-block;
-  flex: none;
-  width: 16px;
-  height: 16px;
-  border: 2px solid #444;
-  border-top-color: #ff6b6b;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-.spinner-small { width: 10px; height: 10px; border-width: 1.5px; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .spinner { animation-duration: 2.4s; }
-}
 
 /* Home <-> the other pages (Links with viewTransition): the home title glides
    into the nav brand and the nav bar slides down (and back up going home); the
@@ -121,6 +104,7 @@ input {
 @keyframes nav-slide-in { from { transform: translateY(-100%); } }
 @keyframes nav-slide-out { to { transform: translateY(-100%); } }
 @media (prefers-reduced-motion: reduce) {
+  .progress-fill { transition: none !important; }
   ::view-transition-group(*),
   ::view-transition-old(*),
   ::view-transition-new(*) { animation: none !important; }

@@ -774,6 +774,10 @@ describe("scoring many artists a step at a time", () => {
       expect(scores.get(name)!.score).toBe(computeSimilarity(g, name, ["Ty Segall"]).overallScore);
     }
     expect(scores.get("Nobody At All")).toEqual({ score: 0, found: false });
+    // Each score keeps how it connects, read from the liked artist (for the concert panel)
+    const charles = scores.get("Charles Moothart")!.pairs!;
+    expect(charles.map((p) => [p.name, p.score])).toEqual([["Ty Segall", 100]]);
+    expect(charles[0]!.path![0]!.from.name).toBe("Ty Segall");
   });
 });
 

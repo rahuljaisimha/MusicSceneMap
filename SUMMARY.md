@@ -168,8 +168,15 @@ Discover (upcoming concert recommendations, streamed: concertSearch.ts streamCon
           each headliner once, cached on the page per liked-artist list. The list
           re-sorts after each page (sortConcerts: scored by score then date, then
           unscored by date)
-        → A spinner + status line ("Berlin, Germany: 300 of 592 concerts · scoring 64
-          artists…"); Stop (or a new search, or leaving the page) ends the run
+        → While it runs the Find Concerts button becomes Stop with a progress bar inside
+          (searchProgress: pages loaded × concerts scored) and a status line ("Berlin,
+          Germany: 300 of 592 concerts · scoring 64 artists…"); Stop (or a new search,
+          or leaving the page) ends the run
+        → Cards: headliner + score, "Support from: ..." (the rest of the bill), date ·
+          venue. Tapping one opens ConcertPanel (Explore's .info-panel: sidebar on
+          desktop, bottom sheet on phones): the strongest path from each liked artist
+          (the pairs kept with each HeadlinerScore), best first, with the same hop
+          sentences, weights and formula as Similarity's panel (components/ConnectionPath.tsx)
         → Artists not in the graph score 0, shown but ranked last (flagged)
         → Pollstar calls go to the pollstar-city function only: fetched server-side,
           24h cache in Postgres shared by every visitor (plus the browser's own 24h

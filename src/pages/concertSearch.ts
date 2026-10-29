@@ -8,6 +8,7 @@
 
 import type { PollstarCity, PollstarEvent } from "../api/pollstar";
 import { headlineArtist, sortConcerts, toConcert, type RankedConcert } from "./concerts";
+import type { HeadlinerScore } from "./similarity";
 
 /** Concerts per Pollstar page (the pollstar-city function asks for this many). */
 export const CITY_PAGE_SIZE = 100;
@@ -32,8 +33,8 @@ export interface ConcertSearchDeps {
    */
   scoreMany(
     artists: string[],
-    onScore: (artist: string, score: { score: number; found: boolean }) => void
-  ): Promise<Map<string, { score: number; found: boolean }>>;
+    onScore: (artist: string, score: HeadlinerScore) => void
+  ): Promise<Map<string, HeadlinerScore>>;
 }
 
 export interface ConcertSearchProgress {
@@ -84,7 +85,7 @@ export async function streamConcerts(
   isStopped: () => boolean = () => false
 ): Promise<void> {
   const concerts = new Map<string, RankedConcert>();
-  const scores = new Map<string, { score: number; found: boolean }>(); // by lowercased headliner
+  const scores = new Map<string, HeadlinerScore>(); // by lowercased headliner
   const queued = new Set<string>();
   const batches: string[][] = [];
   let scoringNow = 0;
@@ -111,14 +112,14 @@ export async function streamConcerts(
         const batch = batches.shift()!;
         scoringNow = batch.length;
         // Each headliner's concerts move into place as soon as its score is known
-        const apply = (name: string, s: { score: number; found: boolean }) => {
+        const apply = (name: string, s: HeadlinerScore) => {
           const key = name.toLowerCase();
           if (scores.has(key)) return;
           scores.set(key, s);
           scoringNow = Math.max(0, scoringNow - 1);
           for (const [id, c] of concerts) {
             if (!c.scored && c.artistName.toLowerCase() === key) {
-              concerts.set(id, { ...c, scored: true, score: s.score, artistFound: s.found });
+              concerts.set(id, { ...c, scored: true, score: s.score, artistFound: s.found, ...(s.pairs ? { pairs: s.pairs } : {}) });
             }
           }
           emit();
@@ -127,7 +128,7 @@ export async function streamConcerts(
           .scoreMany(batch, (name, s) => {
             if (!isStopped()) apply(name, s);
           })
-          .catch(() => new Map<string, { score: number; found: boolean }>());
+          .catch(() => new Map<string, HeadlinerScore>());
         for (const name of batch) apply(name, results.get(name) ?? { score: 0, found: false });
         scoringNow = 0;
       }
@@ -187,3 +188,17 @@ export async function streamConcerts(
   progress.stage = "done";
   emit();
 }
+
+/**
+ * How far along a search is, 0..1, for the progress bar: loading pages and
+ * scoring what they bring both count (a page isn't done until its concerts are
+ * scored).
+ */
+export function searchProgress(progress: ConcertSearchProgress, concerts: RankedConcert[]): number {
+  if (progress.stage === "done") return 1;
+  if (!progress.city || progress.pagesTotal === 0) return 0.05;
+  const pages = progress.pagesLoaded / progress.pagesTotal;
+  const scored = concerts.length === 0 ? 1 : concerts.filter((c) => c.scored).length / concerts.length;
+  return Math.min(1, 0.05 + 0.25 * pages + 0.7 * pages * scored);
+}
+

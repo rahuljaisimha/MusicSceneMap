@@ -126,6 +126,9 @@ input {
   ::view-transition-new(*) { animation: none !important; }
 }
 
+/* Footer: the data sources, under every page but About; clear of the home indicator */
+.site-footer { padding-bottom: max(0.3rem, env(safe-area-inset-bottom)) !important; }
+
 /* Home: page buttons */
 .home-card:hover { border-color: #ff6b6b !important; background: #202020 !important; }
 .home-card:focus-visible { outline: 2px solid #48dbfb; outline-offset: 2px; }
@@ -208,7 +211,6 @@ input {
     border-top: 1px solid #2a2a2a;
     border-radius: 12px 12px 0 0;
     box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.5);
-    padding-bottom: max(1rem, env(safe-area-inset-bottom)) !important;
     z-index: 50;
   }
   .info-close {
@@ -223,6 +225,13 @@ input {
   .home-links {
     grid-template-columns: 1fr !important;
     gap: 0.75rem !important;
+  }
+  .home-page.page-container {
+    padding-bottom: 0 !important; /* the footer ends the page */
+  }
+  .home-page .site-footer {
+    margin-left: -1rem !important;
+    margin-right: -1rem !important;
   }
   .home-card {
     min-height: 88px !important;

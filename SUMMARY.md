@@ -244,7 +244,8 @@ src/
 ├── components/
 │   ├── ArtistAutocomplete.tsx — Artist input + dropdown (keyboard, ARIA combobox, 44px rows on phones).
 │   │                       Used by SearchBar, Discover, Similarity and Play's custom game.
-│   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links; the brand links home; hidden on the home page.
+│   ├── Layout.tsx        — Shared nav bar with Explore/Play/Discover/Similarity/About links; the brand links home; hidden on the home page. Pins SiteFooter under every page but Home (which puts it after its content) and About (which has the full credits).
+│   ├── SiteFooter.tsx    — One-line footer: the data sources (MusicBrainz, setlist.fm, Pollstar) and that connections and shows may be missing.
 │   │                       Inline tabs on desktop; hamburger menu below 640px.
 │   ├── SearchBar.tsx     — Search input, expand, reset. Responsive layout.
 │   ├── GraphView.tsx     — Force-directed 2D graph canvas (solid=expanded, outline=unexpanded).

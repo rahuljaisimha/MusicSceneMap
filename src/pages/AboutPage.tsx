@@ -114,10 +114,12 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "2rem",
     display: "flex",
     justifyContent: "center",
+    alignItems: "flex-start", // the content grows past the screen, so the page scrolls to its end (and its bottom padding)
   },
   content: {
     maxWidth: "600px",
     width: "100%",
+    paddingBottom: "3rem", // room after the last section (no footer here)
   },
   title: {
     fontSize: "1.6rem",

@@ -252,13 +252,6 @@ export const PATH_MIN_STRENGTH = 0.001;
  * closest connection (pendingPairs / mergePairs).
  */
 export const QUICK_MIN_STRENGTH = 0.05;
-/**
- * With `closest`, a pair weaker than this is searched again from the liked artist's
- * end. A search from a hub (will.i.am, Taylor Swift) can spend its MAX_EXPANDED budget
- * on the hub's huge neighbourhood before it reaches a small artist; from the small
- * artist's end the same path is found in a few hundred expansions.
- */
-export const RECHECK_BELOW = 0.05;
 /** At most this many artists are expanded per search, to bound the time a search can take. */
 export const MAX_EXPANDED = 10000;
 
@@ -277,6 +270,10 @@ class MinHeap {
   private items: Array<[number, string]> = [];
   get size(): number {
     return this.items.length;
+  }
+  /** The smallest length, Infinity when empty. */
+  peek(): number {
+    return this.items[0]?.[0] ?? Infinity;
   }
   push(item: [number, string]): void {
     const a = this.items;
@@ -314,6 +311,8 @@ class MinHeap {
  * (Dijkstra over REL_DISTANCES + hub damping + HOP_DISTANCE), each read from `start`
  * outwards. A target with no path within MAX_HOPS / `minStrength` (default
  * MIN_STRENGTH) is missing from the result. Stops as soon as every target is settled.
+ * `stats.capped` is set when it ran out of MAX_EXPANDED. computeSimilarity uses
+ * `connect` (both ends) instead; this one-ended search is kept for comparison in tests.
  *
  * Approximate in two corners, both from costs that depend on hop count: a node
  * first reached by a short path at the hop limit isn't expanded further, even if
@@ -325,7 +324,8 @@ export function strongestPaths(
   graph: GraphAccess,
   start: SimNode,
   targetIds: Set<string>,
-  minStrength: number = MIN_STRENGTH
+  minStrength: number = MIN_STRENGTH,
+  stats?: { capped: boolean }
 ): Map<string, PathStep[]> {
   const maxLength = Math.log(1 / minStrength);
   const found = new Map<string, PathStep[]>();
@@ -358,39 +358,161 @@ export function strongestPaths(
     settled.add(id);
     if (remaining.delete(id)) found.set(id, pathTo(id));
     if (remaining.size === 0) break;
-    if (hops.get(id)! >= MAX_HOPS || ++expanded > MAX_EXPANDED) continue;
+    if (hops.get(id)! >= MAX_HOPS) continue;
+    if (++expanded > MAX_EXPANDED) {
+      if (stats) stats.capped = true;
+      continue;
+    }
 
     const from = nodes.get(id)!;
-    for (const { node, relType, outgoing, count } of graph.neighbors(id)) {
+    for (const neighbor of graph.neighbors(id)) {
+      const { node } = neighbor;
       if (settled.has(node.id)) continue;
-      const atFrom = hubLength(graph, from, relType);
-      const atTo = hubLength(graph, node, relType);
-      const repeated = count !== undefined && count > 1 && relType in REPEATS;
-      const base = repeated ? repeatWeight(relType, count) : relWeight(relType);
-      const edge = (repeated ? Math.log(1 / base) : relDistance(relType)) + atFrom.length + atTo.length;
+      const { edge, step } = hop(graph, from, neighbor);
       const nd = d + edge + (hops.get(id)! + 1 > FREE_HOPS ? HOP_DISTANCE : 0);
       if (nd > maxLength || nd >= (dist.get(node.id) ?? Infinity)) continue;
       dist.set(node.id, nd);
       hops.set(node.id, hops.get(id)! + 1);
       nodes.set(node.id, node);
-      const hubs = [
-        ...(atFrom.count ? [{ node: from, count: atFrom.count }] : []),
-        ...(atTo.count ? [{ node, count: atTo.count }] : []),
-      ];
-      cameFrom.set(node.id, {
-        from,
-        to: node,
-        relType,
-        weight: Math.exp(-edge),
-        baseWeight: base,
-        ...(count !== undefined ? { count } : {}),
-        ...(hubs.length ? { hubs } : {}),
-        fromIsSource: outgoing,
-      });
+      cameFrom.set(node.id, step);
       heap.push([nd, node.id]);
     }
   }
   return found;
+}
+
+/** One hop from `from` to a neighbor: its length (−ln of its damped weight) and the PathStep it makes. */
+function hop(graph: GraphAccess, from: SimNode, { node, relType, outgoing, count }: SimNeighbor): { edge: number; step: PathStep } {
+  const atFrom = hubLength(graph, from, relType);
+  const atTo = hubLength(graph, node, relType);
+  const repeated = count !== undefined && count > 1 && relType in REPEATS;
+  const base = repeated ? repeatWeight(relType, count) : relWeight(relType);
+  const edge = (repeated ? Math.log(1 / base) : relDistance(relType)) + atFrom.length + atTo.length;
+  const hubs = [
+    ...(atFrom.count ? [{ node: from, count: atFrom.count }] : []),
+    ...(atTo.count ? [{ node, count: atTo.count }] : []),
+  ];
+  return {
+    edge,
+    step: {
+      from,
+      to: node,
+      relType,
+      weight: Math.exp(-edge),
+      baseWeight: base,
+      ...(count !== undefined ? { count } : {}),
+      ...(hubs.length ? { hubs } : {}),
+      fromIsSource: outgoing,
+    },
+  };
+}
+
+/** One end of a bidirectional search: the strongest paths found so far from `start`. */
+class SearchSide {
+  /** Search key: edge lengths + HOP_DISTANCE for each hop after this side's first (one free hop per side). */
+  dist = new Map<string, number>();
+  /** Edge lengths alone and hop counts, to cost a joined path exactly. */
+  edges = new Map<string, number>();
+  hops = new Map<string, number>();
+  cameFrom = new Map<string, PathStep>();
+  nodes = new Map<string, SimNode>();
+  settled = new Set<string>();
+  heap = new MinHeap();
+  constructor(readonly start: SimNode) {
+    for (const m of [this.dist, this.edges, this.hops]) m.set(start.id, 0);
+    this.nodes.set(start.id, start);
+    this.heap.push([0, start.id]);
+  }
+  /** The path from `start` to `id`, read from `start`. */
+  pathTo(id: string): PathStep[] {
+    const path: PathStep[] = [];
+    for (let cur = id; cur !== this.start.id; ) {
+      const step = this.cameFrom.get(cur)!;
+      path.unshift(step);
+      cur = step.from.id;
+    }
+    return path;
+  }
+}
+
+/**
+ * The strongest path from `from` to `to`, read from `from` (bidirectional Dijkstra):
+ * it searches outward from both ends at once, always growing the end with the smaller
+ * frontier, and stops when no unexplored path can beat the best meeting found. Neither
+ * end has to cover a hub's whole neighbourhood (will.i.am, Taylor Swift), so a weak
+ * path to a small artist is found in a few hundred steps, whichever end is the hub.
+ *
+ * Costs depend on the total hop count (FREE_HOPS, MAX_HOPS), which neither side
+ * knows alone: each side counts one free hop, and a meeting is costed exactly from
+ * both halves' edge lengths and hops. MAX_EXPANDED is shared by the two sides;
+ * `stats.capped` is set when it runs out. null when there's no path within
+ * MAX_HOPS / `minStrength`.
+ */
+export function connect(
+  graph: GraphAccess,
+  from: SimNode,
+  to: SimNode,
+  minStrength: number = MIN_STRENGTH,
+  stats?: { capped: boolean }
+): PathStep[] | null {
+  if (from.id === to.id) return [];
+  const maxLength = Math.log(1 / minStrength);
+  const fwd = new SearchSide(from);
+  const bwd = new SearchSide(to);
+  let best = maxLength;
+  // The best meeting's path, taken when it's found (not rebuilt at the end)
+  let bestPath: PathStep[] | null = null;
+
+  let expanded = 0;
+  while (fwd.heap.size > 0 || bwd.heap.size > 0) {
+    // No unexplored path is stronger than the best meeting. The two keys can overstate a
+    // path by one HOP_DISTANCE (all its hops on one side: that side charged for its
+    // second hop, which is free overall), so that much slack is allowed.
+    const bound = (fwd.heap.size === 0 ? 0 : fwd.heap.peek()) + (bwd.heap.size === 0 ? 0 : bwd.heap.peek());
+    if (bound - HOP_DISTANCE >= best) break;
+    const [side, other] =
+      bwd.heap.size === 0 || (fwd.heap.size > 0 && fwd.heap.size <= bwd.heap.size) ? [fwd, bwd] : [bwd, fwd];
+    const [d, id] = side.heap.pop()!;
+    if (side.settled.has(id) || d > (side.dist.get(id) ?? Infinity)) continue;
+    side.settled.add(id);
+    if (side.hops.get(id)! >= MAX_HOPS) continue;
+    if (++expanded > MAX_EXPANDED) {
+      if (stats) stats.capped = true;
+      break;
+    }
+    const node = side.nodes.get(id)!;
+    for (const neighbor of graph.neighbors(id)) {
+      const next = neighbor.node.id;
+      if (side.settled.has(next) && !other.dist.has(next)) continue;
+      const { edge, step } = hop(graph, node, neighbor);
+      const e = side.edges.get(id)! + edge;
+      const h = side.hops.get(id)! + 1;
+      const nd = e + Math.max(0, h - 1) * HOP_DISTANCE;
+      if (nd > maxLength) continue;
+      // A meeting: this hop joins the other side's path to `next`. Checked even when it
+      // doesn't improve this side's key: with fewer hops it can still be the better join.
+      if (other.dist.has(next)) {
+        const hops = h + other.hops.get(next)!;
+        const total = e + other.edges.get(next)! + Math.max(0, hops - FREE_HOPS) * HOP_DISTANCE;
+        if (hops <= MAX_HOPS && total <= best) {
+          best = total;
+          // Taken now: later relaxations can re-point the nodes it went through.
+          const near = [...side.pathTo(id), step];
+          const far = other.pathTo(next);
+          // from -> meet, then meet -> to (the backward half walked the other way)
+          bestPath = side === fwd ? [...near, ...reversePath(far)] : [...far, ...reversePath(near)];
+        }
+      }
+      if (nd >= (side.dist.get(next) ?? Infinity)) continue;
+      side.dist.set(next, nd);
+      side.edges.set(next, e);
+      side.hops.set(next, h);
+      side.nodes.set(next, neighbor.node);
+      side.cameFrom.set(next, step);
+      side.heap.push([nd, next]);
+    }
+  }
+  return bestPath;
 }
 
 /** The same path walked the other way. */
@@ -417,10 +539,11 @@ export function strengthScore(strength: number): number {
 }
 
 /**
- * `closest` (the Similarity page): look for paths down to PATH_MIN_STRENGTH, so a
- * pair scoring 0 still shows its closest connection, and search a weak pair again
- * from the liked artist's end (RECHECK_BELOW), keeping the stronger path. Off for
- * ranking, which only needs scores and runs once per candidate artist.
+ * Each pair is a bidirectional search between the liked artist and the compared
+ * one (`connect`), read from the liked artist. `closest` (the Similarity page's
+ * second pass): look for paths down to PATH_MIN_STRENGTH, so a pair scoring 0
+ * still shows its closest connection; `quick` (its first pass): stop at
+ * QUICK_MIN_STRENGTH.
  */
 export function computeSimilarity(
   graph: GraphAccess,
@@ -439,19 +562,11 @@ export function computeSimilarity(
     };
   }
 
-  const nodes = listArtists.map((a) => resolveArtist(graph, a));
-  const paths = strongestPaths(graph, target, new Set(nodes.filter((n): n is SimNode => n !== null).map((n) => n.id)), minStrength);
-
-  const pairs: PairScore[] = listArtists.map((a, i) => {
-    const node = nodes[i];
+  const pairs: PairScore[] = listArtists.map((a) => {
+    const node = resolveArtist(graph, a);
     if (!node) return { name: refName(a), found: false, distance: null, score: 0, path: null };
-    const fromTarget = paths.get(node.id);
     // Read from the list artist to the target ("how does the artist I like lead to this one").
-    let path = fromTarget ? reversePath(fromTarget) : null;
-    if (closest && node.id !== target.id && (!path || pathStrength(path) < RECHECK_BELOW)) {
-      const fromListArtist = strongestPaths(graph, node, new Set([target.id]), minStrength).get(target.id);
-      if (fromListArtist && (!path || pathStrength(fromListArtist) > pathStrength(path))) path = fromListArtist;
-    }
+    const path = connect(graph, node, target, minStrength);
     if (!path) return { name: node.name, found: true, node, distance: null, path: null, strength: 0, score: 0 };
     const strength = pathStrength(path);
     return { name: node.name, found: true, node, distance: path.length, path, strength, score: strengthScore(strength) };

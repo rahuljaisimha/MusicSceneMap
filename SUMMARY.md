@@ -135,19 +135,19 @@ Similarity mode (artist-to-scene fit scoring):
           0.9 for two shows or more, however many.
           graph-neighbors returns the count too (Postgres relationships.count)
         → Pair score = 100 x e^(-path length) = the shortest path's (damped) weights
-          multiplied x 0.9 per hop after the second. One Dijkstra search from the
-          compared artist finds the strongest path to every liked artist (strongestPaths):
-          at most MAX_HOPS (6) hops; a pair under MIN_STRENGTH (a score of 2) scores 0, and the
-          Similarity page (computeSimilarity closest: true) searches down to PATH_MIN_STRENGTH
-          (0.001) so it still shows that pair's closest connection, and searches any pair
-          under RECHECK_BELOW (0.05) again from the liked artist's end, keeping the stronger
-          path: a search from a hub can use up MAX_EXPANDED before it reaches a small artist
-          (ranking does neither). The page runs two passes: a quick one (quick: true, down to
-          QUICK_MIN_STRENGTH 0.05) shows every pair scoring 5+ at once and the rest as 0
-          ("Looking for a connection…"); after it's painted, a closest pass over just those
-          (pendingPairs) fills in their paths and any 2-4 scores (mergePairs);
-          at most MAX_EXPANDED (10,000) artists expanded. graphDb.getNeighbors keeps its
-          two prepared statements for the search's thousands of calls
+          multiplied x 0.9 per hop after the second. Each (liked, compared) pair is a
+          bidirectional Dijkstra (connect): it grows whichever end has the smaller
+          frontier, so a hub's neighbourhood (will.i.am, Taylor Swift) is never searched
+          whole, and costs a meeting exactly (each side counts one free hop; joined paths
+          over MAX_HOPS are rejected). Paths read liked -> compared. At most MAX_HOPS (6)
+          hops and MAX_EXPANDED (10,000) expansions shared by both ends; a pair under
+          MIN_STRENGTH (a score of 2) scores 0. The Similarity page runs two passes: a
+          quick one (quick: true, down to QUICK_MIN_STRENGTH 0.05) shows every pair scoring
+          5+ at once and the rest as 0 ("Looking for a connection…"); after it's painted, a
+          closest pass (down to PATH_MIN_STRENGTH 0.001) over just those (pendingPairs)
+          fills in their closest connections and any 2-4 scores (mergePairs).
+          graphDb.getNeighbors keeps its two prepared statements for the search's
+          thousands of calls
         → Overall = best pair + a diminishing bonus for every other pair scoring >= 60
           (2nd adds 25% of its score, 3rd 12.5%, ...), capped at 100: more good matches
           lift it, weak ones never lower it (BONUS_THRESHOLD / BONUS_SHARE)

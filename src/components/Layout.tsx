@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { SiteFooter } from "./SiteFooter";
 
 const NAV_ITEMS = [
   { to: "/explore", label: "Explore" },
@@ -30,6 +31,7 @@ export function Layout() {
   }, [menuOpen]);
 
   // The home page is its own menu: no nav bar there.
+  // It puts the footer after its content itself.
   if (location.pathname === "/") return <Outlet />;
 
   return (
@@ -64,6 +66,8 @@ export function Layout() {
       </nav>
       {menuOpen && <div className="nav-backdrop" style={styles.backdrop} onClick={() => setMenuOpen(false)} />}
       <Outlet />
+      {/* Not on About, which has the full credits */}
+      {location.pathname !== "/about" && <SiteFooter />}
     </>
   );
 }

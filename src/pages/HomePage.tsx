@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { SiteFooter } from "../components/SiteFooter";
 
 /** The pages the home screen links to, in nav order. */
 export const HOME_LINKS = [
@@ -11,7 +12,7 @@ export const HOME_LINKS = [
 
 export function HomePage() {
   return (
-    <div className="page-container" style={styles.container}>
+    <div className="page-container home-page" style={styles.container}>
       <div style={styles.content}>
         <h1 className="page-title home-title" style={styles.title}>MusicSceneMap</h1>
         <p style={styles.summary}>
@@ -27,6 +28,7 @@ export function HomePage() {
           ))}
         </nav>
       </div>
+      <SiteFooter inline />
     </div>
   );
 }
@@ -35,13 +37,15 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     flex: 1,
     overflowY: "auto",
-    padding: "2.5rem 2rem 2rem",
+    padding: "2.5rem 2rem 0",
     display: "flex",
-    justifyContent: "center",
+    flexDirection: "column",
+    alignItems: "center",
   },
   content: {
     maxWidth: "760px",
     width: "100%",
+    marginBottom: "2rem",
   },
   title: {
     fontSize: "2rem",

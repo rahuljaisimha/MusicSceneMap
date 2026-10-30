@@ -226,9 +226,13 @@ src/
 │   │                       Renders before the graph downloads (skeleton start/end/par/moves until known).
 │   ├── DiscoverPage.tsx  — Upcoming concerts: city + artists → the Pollstar city's upcoming events,
 │   │                       streamed in a page at a time and ranked by headline-artist similarity;
-│   │                       spinner, status, Stop.
+│   │                       spinner, status, Stop. Starts with the last city searched (savedCity.ts)
+│   │                       and the liked artists shared with Similarity.
+│   ├── savedCity.ts      — The last city Discover searched, as a PollstarCity in localStorage
+│   │                       (`discover.city`): prefilled and already picked, so no lookup.
 │   ├── concertSearch.ts  — streamConcerts: the Discover search as a stream of updates (deps injected).
 │   ├── SimilarityPage.tsx — Similarity Score: list of artists + target artist → 0–100 fit score.
+│   │                       The liked-artist list is shared with Discover (loadLikedArtists/saveLikedArtists).
 │   │                       Wires graphDb into the similarity.ts GraphAccess; renders weighted breakdown.
 │   ├── similarity.ts     — Pure scoring logic (GraphAccess interface, testable without sql.js).
 │   │                       REL_WEIGHTS per relationship type (placeholders), album-credit weighting,
@@ -396,6 +400,7 @@ CREATE TABLE graph_meta_added_nodes (value TEXT PRIMARY KEY); -- acts it added (
 - **Mostly client-side**: The site is static (GitHub Pages / Cloudflare) and graph queries run in the browser. Network calls are limited to Supabase edge functions (venue search, Tier-2 graph lookups, miss reporting), MusicBrainz (Tier-3 fallback) and Pollstar (concerts).
 - **No Spotify import**: removed. Since February 2026 Spotify's Development Mode allows at most 5 allow-listed users, and Extended Quota Mode is only for established businesses, so a public Spotify top-artists import isn't possible (the About page's FAQ explains this to users).
 - **Game persistence**: 24h in localStorage. New Game clears and regenerates.
+- **Remembered choices**: the liked artists (`likedArtists`: one list for Similarity and Discover, saved on every change, MBIDs kept) and Discover's last searched city (`discover.city`, saved when a search finds it) stay in localStorage in this browser. Unreadable saved data is ignored.
 - **Responsive**: Phone layouts come from one `@media (max-width: 640px)` block in `index.css` that targets class hooks on components (inline styles stay the desktop default). Below 640px: hamburger nav, one-row Explore toolbar, bottom-sheet InfoPanel, 44px tap targets, safe-area insets. Tested at 320px and 390px with no horizontal scroll.
 
 ## Running

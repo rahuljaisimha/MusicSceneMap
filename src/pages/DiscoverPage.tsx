@@ -8,7 +8,8 @@ import { CITY_PAGE_SIZE, MAX_CITY_PAGES, pickCity, searchProgress, streamConcert
 import { clampRange, defaultRange, formatRange, isoDate, maxDate, type DateRange } from "./dateRange";
 import type { RankedConcert } from "./concerts";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
-import { addPicked, chipLabel, fromSuggestion, pickedKey, type PickedArtist } from "./pickedArtists";
+import { addPicked, chipLabel, fromSuggestion, loadLikedArtists, pickedKey, saveLikedArtists, type PickedArtist } from "./pickedArtists";
+import { loadCity, saveCity } from "./savedCity";
 
 /** Lets the browser draw (and handle Stop) between scores: each one runs on the main thread. */
 function yieldToBrowser(): Promise<void> {
@@ -16,15 +17,19 @@ function yieldToBrowser(): Promise<void> {
 }
 
 export function DiscoverPage() {
-  const [city, setCity] = useState("");
+  // The last city searched (this browser), already picked: no lookup to search it again
+  const [savedCity] = useState(loadCity);
+  const [city, setCity] = useState(savedCity?.name ?? "");
   // The city picked from the dropdown, while its name is still in the input
-  const [cityPick, setCityPick] = useState<PollstarCity | null>(null);
+  const [cityPick, setCityPick] = useState<PollstarCity | null>(savedCity);
   const [searchedCity, setSearchedCity] = useState("");
   // Today through a week from today, until the user picks other dates
   const [range, setRange] = useState<DateRange>(() => defaultRange());
   const [searchedRange, setSearchedRange] = useState<DateRange | null>(null);
   const [artistInput, setArtistInput] = useState("");
-  const [artists, setArtists] = useState<PickedArtist[]>([]);
+  // Shared with Similarity and remembered in this browser
+  const [artists, setArtists] = useState<PickedArtist[]>(loadLikedArtists);
+  useEffect(() => saveLikedArtists(artists), [artists]);
   const [concerts, setConcerts] = useState<RankedConcert[] | null>(null);
   const [progress, setProgress] = useState<ConcertSearchProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +97,12 @@ export function DiscoverPage() {
         cityName,
         {
           // A picked city as it is; typed text, the best match for it
-          findCity: async (query) =>
-            cityPick && cityPick.name === query ? cityPick : pickCity(await searchCities(query), query),
+          // The city found is remembered for next time.
+          findCity: async (query) => {
+            const found = cityPick && cityPick.name === query ? cityPick : pickCity(await searchCities(query), query);
+            if (found) saveCity(found);
+            return found;
+          },
           cityEvents: (cityId, page) => getCityEvents(cityId, page, dates),
           // A page's headliners together: those missing from the browser graph are
           // fetched at once, then one search from each liked artist scores them all.

@@ -43,7 +43,8 @@ export function AboutPage() {
           same graph-based similarity as the Similarity page. While it searches, the button shows its
           progress, and Stop ends the search with what it has found so far. Tap a concert to see how
           its headliner connects to the artists you like. Artists not yet in the graph are
-          shown but ranked lowest.
+          shown but ranked lowest. The artists you like (shared with Similarity) and the
+          last city you searched are remembered in your browser for next time.
         </p>
 
         <h2 style={styles.heading}>Similarity Score</h2>

@@ -3,7 +3,7 @@ import { computeSimilarity, mergePairs, MIN_STRENGTH, pendingPairs, type PairSco
 import { panelStyles, PathSteps, scoreColor, scoreFormula } from "../components/ConnectionPath";
 import { buildTieredGraphAccess } from "./tieredGraphAccess";
 import { ArtistAutocomplete } from "../components/ArtistAutocomplete";
-import { addPicked, chipLabel, fromSuggestion, inputArtist, pickedKey, type PickedArtist } from "./pickedArtists";
+import { addPicked, chipLabel, fromSuggestion, inputArtist, loadLikedArtists, pickedKey, saveLikedArtists, type PickedArtist } from "./pickedArtists";
 
 /**
  * Resolves after the browser has painted what was just rendered. A hidden tab
@@ -31,7 +31,9 @@ function scoreLabel(score: number): string {
 
 export function SimilarityPage() {
   const [artistInput, setArtistInput] = useState("");
-  const [artists, setArtists] = useState<PickedArtist[]>([]);
+  // Shared with Discover and remembered in this browser
+  const [artists, setArtists] = useState<PickedArtist[]>(loadLikedArtists);
+  useEffect(() => saveLikedArtists(artists), [artists]);
   const [target, setTarget] = useState("");
   // The artist picked from the compare dropdown, while its name is still in the input.
   const [targetPick, setTargetPick] = useState<PickedArtist | null>(null);

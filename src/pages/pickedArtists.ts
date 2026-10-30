@@ -44,3 +44,36 @@ export function inputArtist(text: string, picked: PickedArtist | null): PickedAr
   const name = text.trim();
   return picked && picked.name === name ? picked : { name };
 }
+
+const STORAGE_KEY = "likedArtists";
+
+/**
+ * The artists you like, shared by Similarity and Discover and remembered in this
+ * browser, so they're there on the other page and after a reload.
+ */
+export function loadLikedArtists(): PickedArtist[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
+    if (!Array.isArray(saved)) return [];
+    let list: PickedArtist[] = [];
+    for (const a of saved) {
+      if (!a || typeof a.name !== "string") continue;
+      list = addPicked(list, {
+        name: a.name,
+        ...(typeof a.id === "string" && a.id ? { id: a.id } : {}),
+        ...(typeof a.disambiguation === "string" && a.disambiguation ? { disambiguation: a.disambiguation } : {}),
+      });
+    }
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+export function saveLikedArtists(list: PickedArtist[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    /* not remembered */
+  }
+}
